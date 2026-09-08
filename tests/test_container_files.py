@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
@@ -17,6 +18,8 @@ DOCKERFILE = ROOT / "Dockerfile"
 START_SCRIPT = ROOT / "docker" / "start.sh"
 MODEL_PATHS = ROOT / "docker" / "extra_model_paths.yaml"
 VERIFY_NODES = ROOT / "docker" / "verify_nodes.py"
+README = ROOT / "README.md"
+JOB_INPUT_FIXTURE = ROOT / "tests" / "fixtures" / "job-input.json"
 
 WORKFLOW_CLASSES = {
     "BasicGuider",
@@ -345,3 +348,70 @@ def test_dockerignore_excludes_repository_metadata_models_and_media() -> None:
         ".env",
         ".env.*",
     } <= ignored
+
+
+def test_readme_documents_the_private_runpod_deployment_contract() -> None:
+    readme = README.read_text()
+
+    assert "j4ds1uajmj" in readme
+    assert "US-KS-2" in readme
+    assert "/runpod-volume/models" in readme
+    assert "10Eros_Max_h3_TURBO-hybrid_beta4.safetensors" in readme
+    assert "qwen3vl_32b_minimax_h3_int8_convrot.safetensors" in readme
+    assert "minimax_h3_video_vae_fp16.safetensors" in readme
+    assert "minimax_h3_audio_vae_fp32.safetensors" in readme
+    assert "minimax_h3_latent_upscaler_3d_bf16.safetensors" in readme
+    assert "queue-based" in readme.lower()
+    assert "RTX PRO 6000" in readme
+    assert "one GPU per worker" in readme
+    assert "Max workers: 1" in readme
+    assert "Active workers: 0" in readme
+    assert "Queue delay: 1 second" in readme
+    assert "FlashBoot: enabled" in readme
+    assert "Execution timeout: 3600 seconds" in readme
+    assert "CUDA 13.0 or newer" in readme
+    assert "locust08/minimax-h3-serverless-worker" in readme
+    assert "POST /run" in readme
+    assert "GET /status/{job-id}" in readme
+    assert '"volume_path": "jobs/018f-example-id/output/result.mp4"' in readme
+    assert "RunPod and S3 credentials belong only in server-side secret stores" in readme
+    assert "NETWORK_VOLUME_DEBUG=true" in readme
+    assert "old Pod must remain until live verification passes" in readme
+    assert "requests==2.32.5" in readme
+    assert "runpod==1.8.1" in readme
+    assert "torch==2.10.0" in readme
+    assert "torchvision==0.25.0" in readme
+    assert "torchaudio==2.10.0" in readme
+    assert "8a33128f2f8c5585c57486c07de481241e70a39c" in readme
+    assert "c2a47f161bdcecc1e6baf3412f1d116febc26ce3" in readme
+    assert "115de7a9d9e34410cffb9ecfd268e993b11a50fb" in readme
+    assert "d7c01b9011f2e8439493f6c02c29995a27df276f" in readme
+
+
+def test_job_input_fixture_is_a_non_secret_handler_request() -> None:
+    payload = json.loads(JOB_INPUT_FIXTURE.read_text())
+    job_input = payload["input"]
+
+    assert job_input["run_id"] == "018f-example-id"
+    assert job_input["output_node_id"] == "42"
+    assert job_input["workflow"]["9"] == {
+        "class_type": "LoadImage",
+        "inputs": {"image": "018f-example-id-kol.png"},
+    }
+    assert job_input["workflow"]["42"]["class_type"] == "VHS_VideoCombine"
+    assert job_input["workflow"]["43"] == {
+        "class_type": "VHS_LoadVideo",
+        "inputs": {"video": "018f-example-id-source.mp4"},
+    }
+    assert job_input["assets"] == [
+        {
+            "kind": "image",
+            "volume_path": "jobs/018f-example-id/input/018f-example-id-kol.png",
+            "comfy_name": "018f-example-id-kol.png",
+        },
+        {
+            "kind": "video",
+            "volume_path": "jobs/018f-example-id/input/018f-example-id-source.mp4",
+            "comfy_name": "018f-example-id-source.mp4",
+        },
+    ]

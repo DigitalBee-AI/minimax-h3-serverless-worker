@@ -1,0 +1,9 @@
+This project derives its RunPod worker behavior from RunPod's worker-comfyui
+version 5.8.6:
+
+https://github.com/runpod-workers/worker-comfyui
+
+This derivative replaces the generic request and output handling with a
+MiniMax H3 contract. It reads one image and one video from private,
+volume-backed paths and publishes the selected MP4 output to a private network
+volume path. These modifications do not make input or output media public.

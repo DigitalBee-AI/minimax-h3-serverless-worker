@@ -1,0 +1,36 @@
+{
+  "input": {
+    "run_id": "018f-example-id",
+    "workflow": {
+      "9": {
+        "class_type": "LoadImage",
+        "inputs": {
+          "image": "018f-example-id-kol.png"
+        }
+      },
+      "42": {
+        "class_type": "VHS_VideoCombine",
+        "inputs": {}
+      },
+      "43": {
+        "class_type": "VHS_LoadVideo",
+        "inputs": {
+          "video": "018f-example-id-source.mp4"
+        }
+      }
+    },
+    "assets": [
+      {
+        "kind": "image",
+        "volume_path": "jobs/018f-example-id/input/018f-example-id-kol.png",
+        "comfy_name": "018f-example-id-kol.png"
+      },
+      {
+        "kind": "video",
+        "volume_path": "jobs/018f-example-id/input/018f-example-id-source.mp4",
+        "comfy_name": "018f-example-id-source.mp4"
+      }
+    ],
+    "output_node_id": "42"
+  }
+}
