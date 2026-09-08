@@ -26,7 +26,7 @@ RUN git clone https://github.com/kijai/ComfyUI-KJNodes.git /comfyui/custom_nodes
     && git clone https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler.git /comfyui/custom_nodes/Comfyui_Minimax_h3_latent_Upscaler \
     && git -C /comfyui/custom_nodes/Comfyui_Minimax_h3_latent_Upscaler checkout d7c01b9011f2e8439493f6c02c29995a27df276f \
     && for requirements in /comfyui/custom_nodes/*/requirements.txt; do \
-         test ! -f "$requirements" || pip install -r "$requirements"; \
+         test ! -f "$requirements" || pip install -r "$requirements" || exit 1; \
        done
 
 WORKDIR /app

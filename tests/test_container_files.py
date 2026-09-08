@@ -85,6 +85,47 @@ def test_dockerfile_excludes_models_media_and_secret_build_arguments() -> None:
     assert all(not forbidden_source.search(line) for line in copy_lines)
 
 
+def test_custom_node_dependency_installation_stops_on_first_failure(
+    tmp_path: Path,
+) -> None:
+    dockerfile = DOCKERFILE.read_text()
+    loop_start = dockerfile.index("for requirements in")
+    loop_end = dockerfile.index("done", loop_start) + len("done")
+    install_loop = dockerfile[loop_start:loop_end].replace("\\\n", "\n")
+
+    custom_nodes = tmp_path / "custom_nodes"
+    first = custom_nodes / "a-first" / "requirements.txt"
+    second = custom_nodes / "b-second" / "requirements.txt"
+    first.parent.mkdir(parents=True)
+    second.parent.mkdir(parents=True)
+    first.write_text("first-dependency\n")
+    second.write_text("second-dependency\n")
+    install_loop = install_loop.replace("/comfyui/custom_nodes", str(custom_nodes))
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    pip_log = tmp_path / "pip.log"
+    fake_pip = bin_dir / "pip"
+    fake_pip.write_text(
+        """#!/bin/sh
+printf '%s\\n' "$3" >> "$PIP_LOG"
+case "$3" in
+  */a-first/requirements.txt) exit 23 ;;
+  *) exit 0 ;;
+esac
+"""
+    )
+    fake_pip.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["PIP_LOG"] = str(pip_log)
+
+    result = subprocess.run(["sh", "-c", install_loop], env=env)
+
+    assert result.returncode != 0
+    assert pip_log.read_text().splitlines() == [str(first)]
+
+
 def test_model_paths_map_every_required_category_to_the_network_volume() -> None:
     values = {}
     for line in MODEL_PATHS.read_text().splitlines():
