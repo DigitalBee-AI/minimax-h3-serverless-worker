@@ -179,3 +179,15 @@ def test_republication_replaces_the_previous_result(tmp_path: Path) -> None:
     destination = volume / "jobs" / RUN_ID / "output" / "result.mp4"
     assert destination.read_bytes() == b"second and final"
     assert result.size_bytes == len(b"second and final")
+
+
+def test_rejects_traversal_run_id_when_publishing(tmp_path: Path) -> None:
+    volume = tmp_path / "volume"
+    volume.mkdir()
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+
+    with pytest.raises(StorageError, match="run_id is invalid"):
+        publish_video(source, volume, "..")
+
+    assert not (volume / "output").exists()

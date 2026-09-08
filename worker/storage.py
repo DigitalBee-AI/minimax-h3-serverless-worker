@@ -9,7 +9,7 @@ import stat
 import tempfile
 from typing import ContextManager, Iterator
 
-from worker.contracts import JobRequest
+from worker.contracts import JobRequest, RUN_ID_PATTERN
 
 
 class StorageError(RuntimeError):
@@ -134,7 +134,7 @@ def publish_video(source: Path, volume_root: Path, run_id: str) -> PublishedVide
     """Atomically publish a ComfyUI result into the job's private output area."""
     if not source.is_file() or source.is_symlink():
         raise StorageError("video source is not a regular file")
-    if not run_id or Path(run_id).name != run_id or "/" in run_id or "\\" in run_id:
+    if not isinstance(run_id, str) or not RUN_ID_PATTERN.fullmatch(run_id):
         raise StorageError("run_id is invalid")
 
     output_directory = volume_root / "jobs" / run_id / "output"
