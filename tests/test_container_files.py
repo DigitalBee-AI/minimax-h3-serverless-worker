@@ -373,10 +373,15 @@ def test_readme_documents_the_private_runpod_deployment_contract() -> None:
     assert "locust08/minimax-h3-serverless-worker" in readme
     assert "POST /run" in readme
     assert "GET /status/{job-id}" in readme
+    assert "Idle timeout: 5 seconds" in readme
     assert '"volume_path": "jobs/018f-example-id/output/result.mp4"' in readme
     assert "RunPod and S3 credentials belong only in server-side secret stores" in readme
     assert "NETWORK_VOLUME_DEBUG=true" in readme
     assert "old Pod must remain until live verification passes" in readme
+    assert "s3://j4ds1uajmj/jobs/018f-example-id/output/result.mp4" in readme
+    assert "--region us-ks-2" in readme
+    assert "https://s3api-us-ks-2.runpod.io" in readme
+    assert "--profile runpod" in readme
     assert "requests==2.32.5" in readme
     assert "runpod==1.8.1" in readme
     assert "torch==2.10.0" in readme

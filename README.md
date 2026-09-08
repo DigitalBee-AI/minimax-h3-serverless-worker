@@ -50,15 +50,16 @@ and must resolve beneath `jobs/<run-id>/input`; it is never an S3 URL or public
 URL. Node 9 is `LoadImage`, node 43 is `VHS_LoadVideo`, and node 42 is
 `VHS_VideoCombine`.
 
-Use the RunPod endpoint ID placeholder in server-side requests:
+Use the approved endpoint `8vrjc9ecbvk8bl` only from server-side code. The
+submit route is `POST /run`; the status route is `GET /status/{job-id}`:
 
 ```bash
-curl --request POST "https://api.runpod.ai/v2/<endpoint-id>/run" \
+curl --request POST "https://api.runpod.ai/v2/8vrjc9ecbvk8bl/run" \
   --header "Authorization: Bearer $RUNPOD_API_KEY" \
   --header "Content-Type: application/json" \
   --data @tests/fixtures/job-input.json
 
-curl "https://api.runpod.ai/v2/<endpoint-id>/status/{job-id}" \
+curl "https://api.runpod.ai/v2/8vrjc9ecbvk8bl/status/{job-id}" \
   --header "Authorization: Bearer $RUNPOD_API_KEY"
 ```
 
@@ -81,6 +82,20 @@ RunPod and S3 credentials belong only in server-side secret stores. Do not
 commit them, pass them as image build arguments, expose them to browsers, or
 log them.
 
+Retrieve the completed MP4 through RunPod's private S3-compatible storage,
+using a server-side `runpod` profile whose credentials are held in a secret
+store. The bucket is `j4ds1uajmj`; use region `us-ks-2` and the endpoint
+`https://s3api-us-ks-2.runpod.io`:
+
+```bash
+aws s3 cp \
+  s3://j4ds1uajmj/jobs/018f-example-id/output/result.mp4 \
+  result.mp4 \
+  --profile runpod \
+  --region us-ks-2 \
+  --endpoint-url https://s3api-us-ks-2.runpod.io
+```
+
 ## Endpoint deployment
 
 Configure endpoint `minimaxh3_beta4` from GitHub source
@@ -96,6 +111,7 @@ settings:
 | Max workers | Max workers: 1 |
 | Active workers | Active workers: 0 |
 | Auto scaling | Queue delay: 1 second |
+| Idle timeout | Idle timeout: 5 seconds |
 | FlashBoot | FlashBoot: enabled |
 | Execution timeout | Execution timeout: 3600 seconds |
 | Allowed CUDA | CUDA 13.0 or newer |
