@@ -56,7 +56,7 @@ def parse_job_input(value: object, volume_root: Path) -> JobRequest:
     if len({asset.comfy_name for asset in assets}) != len(assets):
         raise RequestValidationError("asset comfy_name values must be unique")
 
-    input_root = (volume_root / "jobs" / run_id / "input").resolve()
+    input_root = _resolve_job_input_root(volume_root, run_id)
     for asset in assets:
         _validate_asset_source(asset, input_root)
 
@@ -94,6 +94,18 @@ def _parse_asset(value: object) -> AssetSpec:
     ):
         raise RequestValidationError("asset comfy_name is invalid")
     return AssetSpec(kind=kind, volume_path=volume_path, comfy_name=comfy_name)
+
+
+def _resolve_job_input_root(volume_root: Path, run_id: str) -> Path:
+    lexical_components = (
+        volume_root,
+        volume_root / "jobs",
+        volume_root / "jobs" / run_id,
+        volume_root / "jobs" / run_id / "input",
+    )
+    if any(component.is_symlink() for component in lexical_components):
+        raise RequestValidationError("asset source must not be a symlink")
+    return lexical_components[-1].resolve()
 
 
 def _validate_asset_source(asset: AssetSpec, input_root: Path) -> None:

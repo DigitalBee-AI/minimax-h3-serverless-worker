@@ -129,6 +129,20 @@ def test_rejects_symlinked_asset(tmp_path: Path) -> None:
         parse_job_input(make_payload(), volume_root)
 
 
+def test_rejects_symlinked_job_input_prefix(tmp_path: Path) -> None:
+    volume_root = tmp_path / "volume"
+    redirected_jobs = tmp_path / "outside" / "jobs"
+    redirected_input = redirected_jobs / RUN_ID / "input"
+    redirected_input.mkdir(parents=True)
+    (redirected_input / IMAGE_NAME).write_bytes(b"image")
+    (redirected_input / VIDEO_NAME).write_bytes(b"video")
+    volume_root.mkdir()
+    (volume_root / "jobs").symlink_to(redirected_jobs, target_is_directory=True)
+
+    with pytest.raises(RequestValidationError, match="asset source must not be a symlink"):
+        parse_job_input(make_payload(), volume_root)
+
+
 def test_rejects_missing_asset_file(tmp_path: Path) -> None:
     volume_root = make_volume(tmp_path)
     (volume_root / "jobs" / RUN_ID / "input" / IMAGE_NAME).unlink()
