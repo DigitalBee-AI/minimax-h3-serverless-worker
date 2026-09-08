@@ -54,7 +54,7 @@ def comfy_server(responses: ComfyResponses) -> Iterator[str]:
             pass
 
         def _send(self, status: int, response: object) -> None:
-            encoded = json.dumps(response).encode()
+            encoded = response if isinstance(response, bytes) else json.dumps(response).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(encoded)))
@@ -92,7 +92,12 @@ def test_execute_submits_the_workflow_and_returns_completed_history() -> None:
 def test_execute_reports_comfy_validation_errors() -> None:
     responses = ComfyResponses()
     responses.prompt_status = 400
-    responses.prompt_response = {"node_errors": {"12": {"errors": [{"message": "invalid image"}]}}}
+    responses.prompt_response = {
+        "node_errors": {
+            "unrelated": "do not report this",
+            "12": {"errors": [{"message": "invalid image"}]},
+        }
+    }
 
     with comfy_server(responses) as base_url:
         with pytest.raises(ComfyExecutionError, match="invalid image"):
@@ -105,7 +110,7 @@ def test_execute_reports_comfy_execution_errors() -> None:
         {
             "prompt-1": {
                 "status": {
-                    "completed": False,
+                    "completed": True,
                     "messages": [["execution_error", {"exception_message": "sampler failed"}]],
                 }
             }
@@ -114,6 +119,84 @@ def test_execute_reports_comfy_execution_errors() -> None:
 
     with comfy_server(responses) as base_url:
         with pytest.raises(ComfyExecutionError, match="sampler failed"):
+            ComfyClient(base_url, poll_interval=0.001, request_timeout=1).execute({}, "client-7")
+
+
+def test_execute_url_encodes_prompt_id_for_history_requests() -> None:
+    responses = ComfyResponses()
+    prompt_id = "prompt/id 1"
+    responses.prompt_response = {"prompt_id": prompt_id}
+    responses.history_responses = [
+        {prompt_id: {"status": {"completed": True, "messages": []}, "outputs": {}}}
+    ]
+
+    with comfy_server(responses) as base_url:
+        result = ComfyClient(base_url, poll_interval=0.001, request_timeout=1).execute(
+            {}, "client-7"
+        )
+
+    assert responses.requests[-1] == ("GET", "/history/prompt%2Fid%201", None)
+    assert result == {"status": {"completed": True, "messages": []}, "outputs": {}}
+
+
+@pytest.mark.parametrize("prompt_response", [{}, {"prompt_id": ""}])
+def test_execute_rejects_missing_or_empty_prompt_ids(prompt_response: object) -> None:
+    responses = ComfyResponses()
+    responses.prompt_response = prompt_response
+
+    with comfy_server(responses) as base_url:
+        with pytest.raises(ComfyExecutionError, match="did not include a prompt_id") as error:
+            ComfyClient(base_url, poll_interval=0.001, request_timeout=1).execute(
+                {"secret": "workflow must stay private"}, "client-7"
+            )
+
+    assert "workflow must stay private" not in str(error.value)
+
+
+def test_execute_uses_safe_fallback_for_unrecognized_execution_error_details() -> None:
+    responses = ComfyResponses()
+    responses.history_responses = [
+        {
+            "prompt-1": {
+                "status": {
+                    "completed": True,
+                    "messages": [["execution_error", {"unrelated": "sensitive value"}]],
+                }
+            }
+        }
+    ]
+
+    with comfy_server(responses) as base_url:
+        with pytest.raises(ComfyExecutionError, match="ComfyUI execution_error") as error:
+            ComfyClient(base_url, poll_interval=0.001, request_timeout=1).execute(
+                {"secret": "workflow must stay private"}, "client-7"
+            )
+
+    assert "sensitive value" not in str(error.value)
+    assert "workflow must stay private" not in str(error.value)
+
+
+def test_execute_reports_generic_http_failures_without_workflow_content() -> None:
+    responses = ComfyResponses()
+    responses.prompt_status = 500
+    responses.prompt_response = {"detail": "internal detail"}
+
+    with comfy_server(responses) as base_url:
+        with pytest.raises(ComfyExecutionError, match="HTTP 500") as error:
+            ComfyClient(base_url, poll_interval=0.001, request_timeout=1).execute(
+                {"secret": "workflow must stay private"}, "client-7"
+            )
+
+    assert "internal detail" not in str(error.value)
+    assert "workflow must stay private" not in str(error.value)
+
+
+def test_execute_reports_invalid_json() -> None:
+    responses = ComfyResponses()
+    responses.prompt_response = b"not valid json"
+
+    with comfy_server(responses) as base_url:
+        with pytest.raises(ComfyExecutionError, match="invalid JSON"):
             ComfyClient(base_url, poll_interval=0.001, request_timeout=1).execute({}, "client-7")
 
 

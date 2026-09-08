@@ -47,7 +47,7 @@ class ComfyClient:
         )
         if not isinstance(prompt_id, str) or not prompt_id:
             validation_message = (
-                _message_from(prompt_payload.get("node_errors"))
+                _validation_message(prompt_payload.get("node_errors"))
                 if isinstance(prompt_payload, dict)
                 else None
             )
@@ -85,7 +85,7 @@ class ComfyClient:
         if 200 <= response.status_code < 300:
             return response
 
-        validation_message = _message_from(_safe_json(response).get("node_errors"))
+        validation_message = _validation_message(_safe_json(response).get("node_errors"))
         if validation_message:
             raise ComfyExecutionError(f"ComfyUI validation failed: {validation_message}")
         raise ComfyExecutionError(f"ComfyUI request failed with HTTP {response.status_code}")
@@ -120,20 +120,29 @@ def _execution_message(messages: object) -> Optional[str]:
 
 
 def _message_from(value: object) -> Optional[str]:
-    if isinstance(value, dict):
-        for key in ("message", "exception_message", "error"):
-            message = value.get(key)
-            if isinstance(message, str) and message:
-                return message
-        for nested in value.values():
-            message = _message_from(nested)
+    if not isinstance(value, dict):
+        return None
+    for key in ("message", "error", "exception_message"):
+        message = value.get(key)
+        if isinstance(message, str) and message:
+            return message
+    return None
+
+
+def _validation_message(node_errors: object) -> Optional[str]:
+    if not isinstance(node_errors, dict):
+        return None
+    for node_error in node_errors.values():
+        if not isinstance(node_error, dict):
+            continue
+        message = _message_from(node_error)
+        if message:
+            return message
+        errors = node_error.get("errors")
+        if not isinstance(errors, list):
+            continue
+        for error in errors:
+            message = _message_from(error)
             if message:
                 return message
-    elif isinstance(value, (list, tuple)):
-        for nested in value:
-            message = _message_from(nested)
-            if message:
-                return message
-    elif isinstance(value, str) and value:
-        return value
     return None
