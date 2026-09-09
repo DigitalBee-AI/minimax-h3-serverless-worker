@@ -423,6 +423,29 @@ def test_job_input_fixture_is_a_non_secret_handler_request() -> None:
     ]
 
 
+def test_readme_requires_full_workflow_before_submitting_contract_fixture() -> None:
+    readme = README.read_text()
+    contract_section = readme.split("## Private job contract", 1)[1]
+    before_submit = " ".join(contract_section.split("curl --request POST", 1)[0].split())
+
+    assert "contract-validation-only" in before_submit
+    assert "not runnable" in before_submit
+    assert "Replace `input.workflow` with the full approved API-format workflow" in before_submit
+    assert "before `POST /run`" in before_submit
+    assert "--data @tests/fixtures/job-input.json" not in contract_section
+    assert "--data @job-request.json" in contract_section
+
+
+def test_ci_runs_pytest_as_a_module_after_editable_install() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "test.yml").read_text()
+    commands = re.findall(r"(?m)^\s*- run: (.+)$", workflow)
+
+    assert 'pip install -e ".[test]"' in commands
+    assert "python -m pytest" in commands
+    assert commands.index('pip install -e ".[test]"') < commands.index("python -m pytest")
+    assert "pytest" not in commands
+
+
 def test_project_installs_only_the_worker_package_in_an_isolated_venv(
     tmp_path: Path,
 ) -> None:

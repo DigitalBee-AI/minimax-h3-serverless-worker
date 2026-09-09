@@ -137,9 +137,11 @@ def publish_video(source: Path, volume_root: Path, run_id: str) -> PublishedVide
     if not isinstance(run_id, str) or not RUN_ID_PATTERN.fullmatch(run_id):
         raise StorageError("run_id is invalid")
 
-    output_directory = volume_root / "jobs" / run_id / "output"
+    destination = volume_root / "jobs" / run_id / "output" / "result.mp4"
+    _validate_publication_path(destination, volume_root)
+    output_directory = destination.parent
     output_directory.mkdir(parents=True, exist_ok=True)
-    destination = output_directory / "result.mp4"
+    _validate_publication_path(destination, volume_root)
     file_descriptor, temporary_name = tempfile.mkstemp(
         prefix=".result-", suffix=".tmp", dir=output_directory
     )
@@ -159,3 +161,20 @@ def publish_video(source: Path, volume_root: Path, run_id: str) -> PublishedVide
         filename="result.mp4",
         size_bytes=destination.stat().st_size,
     )
+
+
+def _validate_publication_path(destination: Path, volume_root: Path) -> None:
+    """Reject existing links before mkdir/copy can follow a publication prefix."""
+    try:
+        relative = destination.relative_to(volume_root)
+    except ValueError as exc:
+        raise StorageError("publication path escapes the volume") from exc
+    component = volume_root
+    for part in ("", *relative.parts):
+        component /= part
+        if component.is_symlink():
+            raise StorageError("publication path must not contain symlinks")
+    try:
+        destination.resolve().relative_to(volume_root.resolve())
+    except ValueError as exc:
+        raise StorageError("publication path escapes the volume") from exc

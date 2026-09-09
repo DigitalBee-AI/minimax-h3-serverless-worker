@@ -122,6 +122,55 @@ def test_execute_reports_comfy_execution_errors() -> None:
             ComfyClient(base_url, poll_interval=0.001, request_timeout=1).execute({}, "client-7")
 
 
+@pytest.mark.parametrize("node_id", ["42", 42, 0, "sampler-12"])
+@pytest.mark.parametrize("event", ["execution_error", "execution_interrupted"])
+def test_execute_includes_safe_failing_node_id(node_id: object, event: str) -> None:
+    responses = ComfyResponses()
+    responses.history_responses = [{"prompt-1": {"status": {
+        "completed": False,
+        "messages": [[event, {
+            "node_id": node_id,
+            "exception_message": "sampler failed",
+            "workflow": {"private": "never expose workflow"},
+            "arbitrary": "never expose arbitrary value",
+        }]],
+    }}}]
+
+    with comfy_server(responses) as base_url:
+        with pytest.raises(ComfyExecutionError) as error:
+            ComfyClient(base_url, poll_interval=0.001, request_timeout=1).execute(
+                {"private": "never expose request"}, "client-7"
+            )
+
+    assert str(error.value) == f"ComfyUI node {node_id}: sampler failed"
+
+
+@pytest.mark.parametrize("node_id", [
+    {"node_id": "42", "private": "nested secret"}, ["42", "nested secret"],
+    None, True, False, 42.5, -1, "", "42\nsecret", "42\x1b[31m", "../../secret",
+    "node with spaces", "x" * 129,
+])
+def test_execute_excludes_unsafe_node_id_and_arbitrary_values(node_id: object) -> None:
+    responses = ComfyResponses()
+    responses.history_responses = [{"prompt-1": {"status": {
+        "completed": True,
+        "messages": [["execution_error", {
+            "node_id": node_id,
+            "exception_message": "sampler failed",
+            "workflow": {"node_id": "42", "private": "workflow secret"},
+            "arbitrary": {"message": "arbitrary secret"},
+        }]],
+    }}}]
+
+    with comfy_server(responses) as base_url:
+        with pytest.raises(ComfyExecutionError) as error:
+            ComfyClient(base_url, poll_interval=0.001, request_timeout=1).execute(
+                {"private": "request secret"}, "client-7"
+            )
+
+    assert str(error.value) == "sampler failed"
+
+
 def test_execute_url_encodes_prompt_id_for_history_requests() -> None:
     responses = ComfyResponses()
     prompt_id = "prompt/id 1"

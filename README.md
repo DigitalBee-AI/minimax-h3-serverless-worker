@@ -43,9 +43,15 @@ Comfyui_Minimax_h3_latent_Upscaler `d7c01b9011f2e8439493f6c02c29995a27df276f`.
 
 ## Private job contract
 
+`tests/fixtures/job-input.json` is **contract-validation-only** and is **not runnable**:
+it contains only nodes 9, 42, and 43, without the complete generation graph.
+Copy it to `job-request.json` as a request template. Replace `input.workflow` with the
+full approved API-format workflow before `POST /run`, retaining the complete graph
+and setting nodes 9 and 43 to the uploaded assets' `comfy_name` values.
+
 Before calling RunPod, the website backend uploads both assets to the private
-volume paths in `tests/fixtures/job-input.json`. The request payload is the
-fixture's `input` object. Each `volume_path` is relative to the mounted volume
+volume paths in the prepared request. Submit the complete JSON envelope containing
+`input` as shown below. Each `volume_path` is relative to the mounted volume
 and must resolve beneath `jobs/<run-id>/input`; it is never an S3 URL or public
 URL. Node 9 is `LoadImage`, node 43 is `VHS_LoadVideo`, and node 42 is
 `VHS_VideoCombine`.
@@ -57,7 +63,7 @@ submit route is `POST /run`; the status route is `GET /status/{job-id}`:
 curl --request POST "https://api.runpod.ai/v2/8vrjc9ecbvk8bl/run" \
   --header "Authorization: Bearer $RUNPOD_API_KEY" \
   --header "Content-Type: application/json" \
-  --data @tests/fixtures/job-input.json
+  --data @job-request.json
 
 curl "https://api.runpod.ai/v2/8vrjc9ecbvk8bl/status/{job-id}" \
   --header "Authorization: Bearer $RUNPOD_API_KEY"
@@ -121,7 +127,7 @@ Build and verify locally before changing the endpoint:
 ```bash
 python3.12 -m venv .venv
 .venv/bin/pip install -e ".[test]"
-.venv/bin/pytest
+.venv/bin/python -m pytest
 docker build --platform linux/amd64 -t minimax-h3-serverless-worker:test .
 ```
 

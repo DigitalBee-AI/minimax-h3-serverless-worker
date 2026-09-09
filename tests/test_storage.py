@@ -191,3 +191,96 @@ def test_rejects_traversal_run_id_when_publishing(tmp_path: Path) -> None:
         publish_video(source, volume, "..")
 
     assert not (volume / "output").exists()
+
+
+@pytest.mark.parametrize("prefix", ["", "jobs", f"jobs/{RUN_ID}", f"jobs/{RUN_ID}/output"])
+@pytest.mark.parametrize("existing_result", [False, True])
+def test_publication_rejects_symlinked_directories_without_outside_writes(
+    tmp_path: Path, prefix: str, existing_result: bool
+) -> None:
+    volume = tmp_path / "volume"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked_directory = volume / prefix
+    linked_directory.parent.mkdir(parents=True, exist_ok=True)
+    linked_directory.symlink_to(outside, target_is_directory=True)
+    remaining_parts = Path(f"jobs/{RUN_ID}/output").parts[len(Path(prefix).parts):]
+    outside_result = outside.joinpath(*remaining_parts, "result.mp4")
+    if existing_result:
+        outside_result.parent.mkdir(parents=True, exist_ok=True)
+        outside_result.write_bytes(b"preserve outside result")
+    before = sorted(path.relative_to(outside) for path in outside.rglob("*"))
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"new result")
+
+    with pytest.raises(StorageError, match="symlink"):
+        publish_video(source, volume, RUN_ID)
+
+    assert sorted(path.relative_to(outside) for path in outside.rglob("*")) == before
+    if existing_result:
+        assert outside_result.read_bytes() == b"preserve outside result"
+
+
+def test_publication_rejects_a_symlink_even_when_its_target_is_inside_volume(
+    tmp_path: Path,
+) -> None:
+    volume = make_volume(tmp_path)
+    target = volume / "other-output"
+    target.mkdir()
+    (volume / "jobs" / RUN_ID / "output").symlink_to(target, target_is_directory=True)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"new result")
+
+    with pytest.raises(StorageError, match="symlink"):
+        publish_video(source, volume, RUN_ID)
+
+    assert list(target.iterdir()) == []
+
+
+def test_publication_rejects_symlinked_destination_without_overwriting_target(
+    tmp_path: Path,
+) -> None:
+    volume = make_volume(tmp_path)
+    output = volume / "jobs" / RUN_ID / "output"
+    output.mkdir()
+    outside = tmp_path / "outside.mp4"
+    outside.write_bytes(b"preserve outside")
+    destination = output / "result.mp4"
+    destination.symlink_to(outside)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"new result")
+
+    with pytest.raises(StorageError, match="symlink"):
+        publish_video(source, volume, RUN_ID)
+
+    assert outside.read_bytes() == b"preserve outside"
+    assert destination.is_symlink()
+    assert list(output.iterdir()) == [destination]
+
+
+def test_failed_retry_preserves_published_result_and_cleans_partial_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    volume = make_volume(tmp_path)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"first result")
+    publish_video(source, volume, RUN_ID)
+    destination = volume / "jobs" / RUN_ID / "output" / "result.mp4"
+    source.write_bytes(b"retry result")
+
+    def failed_copy(source_path: Path, temporary_path: Path) -> None:
+        temporary_path.write_bytes(b"partial")
+        assert destination.read_bytes() == b"first result"
+        raise OSError("copy failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("worker.storage.shutil.copyfile", failed_copy)
+        with pytest.raises(OSError, match="copy failed"):
+            publish_video(source, volume, RUN_ID)
+
+    assert destination.read_bytes() == b"first result"
+    assert list(destination.parent.iterdir()) == [destination]
+    result = publish_video(source, volume, RUN_ID)
+    assert destination.read_bytes() == b"retry result"
+    assert result.size_bytes == len(b"retry result")
+    assert list(destination.parent.iterdir()) == [destination]

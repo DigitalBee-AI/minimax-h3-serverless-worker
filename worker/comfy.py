@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Optional
 from urllib.parse import quote
@@ -114,8 +115,19 @@ def _execution_message(messages: object) -> Optional[str]:
             "execution_error",
             "execution_interrupted",
         }:
-            detail = _message_from(message[1] if len(message) > 1 else None)
-            return detail or f"ComfyUI {message[0]}"
+            payload = message[1] if len(message) > 1 else None
+            detail = _message_from(payload) or f"ComfyUI {message[0]}"
+            node_id = _safe_node_id(payload.get("node_id")) if isinstance(payload, dict) else None
+            return f"ComfyUI node {node_id}: {detail}" if node_id is not None else detail
+    return None
+
+
+def _safe_node_id(value: object) -> Optional[str]:
+    """Accept only bounded scalar identifiers, never nested error payload data."""
+    if type(value) is int and 0 <= value < 10**128:
+        value = str(value)
+    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", value):
+        return value
     return None
 
 
