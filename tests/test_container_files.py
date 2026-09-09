@@ -70,7 +70,7 @@ def test_dockerfile_pins_the_approved_runtime_and_revisions() -> None:
     assert "torchaudio==2.10.0" in dockerfile
     assert "https://download.pytorch.org/whl/cu130" in dockerfile
     assert "8a33128f2f8c5585c57486c07de481241e70a39c" in dockerfile
-    assert "c2a47f161bdcecc1e6baf3412f1d116febc26ce3" in dockerfile
+    assert "57105374f47d0fbb49c9c3926fb981702e0a4b5c" in dockerfile
     assert "115de7a9d9e34410cffb9ecfd268e993b11a50fb" in dockerfile
     assert "d7c01b9011f2e8439493f6c02c29995a27df276f" in dockerfile
 
