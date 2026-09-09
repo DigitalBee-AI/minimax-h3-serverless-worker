@@ -1,0 +1,18 @@
+[project]
+name = "minimax-h3-serverless-worker"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "requests==2.32.5",
+  "runpod==1.8.1",
+]
+
+[project.optional-dependencies]
+test = ["pytest==8.4.2"]
+
+[tool.setuptools.packages.find]
+include = ["worker*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
