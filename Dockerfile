@@ -20,7 +20,7 @@ RUN git clone https://github.com/comfyanonymous/ComfyUI.git /comfyui \
     && pip install "transformers>=4.50.3,<5" "huggingface-hub<1.0"
 
 RUN git clone https://github.com/kijai/ComfyUI-KJNodes.git /comfyui/custom_nodes/ComfyUI-KJNodes \
-    && git -C /comfyui/custom_nodes/ComfyUI-KJNodes checkout c2a47f161bdcecc1e6baf3412f1d116febc26ce3 \
+    && git -C /comfyui/custom_nodes/ComfyUI-KJNodes checkout 57105374f47d0fbb49c9c3926fb981702e0a4b5c \
     && git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git /comfyui/custom_nodes/ComfyUI-VideoHelperSuite \
     && git -C /comfyui/custom_nodes/ComfyUI-VideoHelperSuite checkout 115de7a9d9e34410cffb9ecfd268e993b11a50fb \
     && git clone https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler.git /comfyui/custom_nodes/Comfyui_Minimax_h3_latent_Upscaler \
