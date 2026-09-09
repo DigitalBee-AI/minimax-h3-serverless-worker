@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import signal
 import subprocess
+import sys
 import time
 
 import pytest
@@ -420,3 +421,42 @@ def test_job_input_fixture_is_a_non_secret_handler_request() -> None:
             "comfy_name": "018f-example-id-source.mp4",
         },
     ]
+
+
+def test_project_installs_only_the_worker_package_in_an_isolated_venv(
+    tmp_path: Path,
+) -> None:
+    venv = tmp_path / "package-test-venv"
+    subprocess.run([sys.executable, "-m", "venv", venv], check=True)
+    subprocess.run(
+        [venv / "bin" / "pip", "install", "--upgrade", "pip", "setuptools"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    install_command = [
+        venv / "bin" / "pip",
+        "install",
+        "--no-build-isolation",
+        "--no-deps",
+        "-e",
+        str(ROOT),
+    ]
+    if sys.version_info < (3, 12):
+        install_command.append("--ignore-requires-python")
+    subprocess.run(install_command, check=True, capture_output=True, text=True)
+
+    result = subprocess.run(
+        [
+            venv / "bin" / "python",
+            "-c",
+            "import importlib.util; import worker; "
+            "assert importlib.util.find_spec('docker') is None",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
