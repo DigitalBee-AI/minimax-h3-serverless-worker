@@ -9,6 +9,8 @@ RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,191}$")
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm"}
+AUDIO_EXTENSIONS = {".wav"}
+SUPPORTED_JOB_TYPES = {"dance", "foodie"}
 
 
 class RequestValidationError(ValueError):
@@ -20,19 +22,25 @@ class AssetSpec:
     kind: str
     volume_path: str
     comfy_name: str
+    role: str | None = None
 
 
 @dataclass(frozen=True)
 class JobRequest:
     run_id: str
     workflow: dict
-    assets: tuple[AssetSpec, AssetSpec]
+    assets: tuple[AssetSpec, ...]
     output_node_id: str
+    job_type: str = "dance"
 
 
 def parse_job_input(value: object, volume_root: Path) -> JobRequest:
     if not isinstance(value, dict):
         raise RequestValidationError("input must be a dictionary")
+
+    job_type = value.get("job_type", "dance")
+    if not isinstance(job_type, str) or job_type not in SUPPORTED_JOB_TYPES:
+        raise RequestValidationError("job_type is invalid")
 
     run_id = _required_string(value, "run_id")
     if not RUN_ID_PATTERN.fullmatch(run_id):
@@ -47,12 +55,14 @@ def parse_job_input(value: object, volume_root: Path) -> JobRequest:
         raise RequestValidationError("output_node_id must be 42")
 
     raw_assets = value.get("assets")
-    if not isinstance(raw_assets, (list, tuple)) or len(raw_assets) != 2:
-        raise RequestValidationError("exactly one image and one video are required")
+    if not isinstance(raw_assets, (list, tuple)):
+        raise RequestValidationError("assets are required")
 
     assets = tuple(_parse_asset(asset) for asset in raw_assets)
-    if {asset.kind for asset in assets} != {"image", "video"}:
-        raise RequestValidationError("exactly one image and one video are required")
+    if job_type == "dance":
+        _validate_dance_assets(assets)
+    else:
+        _validate_foodie_assets(assets)
     if len({asset.comfy_name for asset in assets}) != len(assets):
         raise RequestValidationError("asset comfy_name values must be unique")
 
@@ -60,15 +70,17 @@ def parse_job_input(value: object, volume_root: Path) -> JobRequest:
     for asset in assets:
         _validate_asset_source(asset, input_root)
 
-    image = next(asset for asset in assets if asset.kind == "image")
-    video = next(asset for asset in assets if asset.kind == "video")
-    _validate_workflow(workflow, image, video)
+    if job_type == "dance":
+        _validate_dance_workflow(workflow, assets)
+    else:
+        _validate_foodie_workflow(workflow, assets)
 
     return JobRequest(
         run_id=run_id,
         workflow=workflow,
-        assets=(assets[0], assets[1]),
+        assets=assets,
         output_node_id=output_node_id,
+        job_type=job_type,
     )
 
 
@@ -85,15 +97,40 @@ def _parse_asset(value: object) -> AssetSpec:
     kind = _required_string(value, "kind")
     volume_path = _required_string(value, "volume_path")
     comfy_name = _required_string(value, "comfy_name")
-    if kind not in {"image", "video"}:
-        raise RequestValidationError("exactly one image and one video are required")
+    role = value.get("role")
+    if kind not in {"image", "video", "audio"}:
+        raise RequestValidationError("asset kind is unsupported")
+    if role is not None and not isinstance(role, str):
+        raise RequestValidationError("asset role is invalid")
     if (
         not NAME_PATTERN.fullmatch(comfy_name)
         or Path(comfy_name).name != comfy_name
         or "\\" in comfy_name
     ):
         raise RequestValidationError("asset comfy_name is invalid")
-    return AssetSpec(kind=kind, volume_path=volume_path, comfy_name=comfy_name)
+    return AssetSpec(
+        kind=kind,
+        volume_path=volume_path,
+        comfy_name=comfy_name,
+        role=role,
+    )
+
+
+def _validate_dance_assets(assets: tuple[AssetSpec, ...]) -> None:
+    if len(assets) != 2 or {asset.kind for asset in assets} != {"image", "video"}:
+        raise RequestValidationError("exactly one image and one video are required")
+
+
+def _validate_foodie_assets(assets: tuple[AssetSpec, ...]) -> None:
+    required = {
+        ("image", "kol"),
+        ("image", "storyboard"),
+        ("audio", "voice"),
+    }
+    if len(assets) != 3 or {(asset.kind, asset.role) for asset in assets} != required:
+        raise RequestValidationError(
+            "exactly one Foodie KOL image, storyboard image, and voice audio are required"
+        )
 
 
 def _resolve_job_input_root(volume_root: Path, run_id: str) -> Path:
@@ -138,20 +175,51 @@ def _validate_asset_source(asset: AssetSpec, input_root: Path) -> None:
     if not source.is_file():
         raise RequestValidationError("asset source must be a regular file")
 
-    extensions = IMAGE_EXTENSIONS if asset.kind == "image" else VIDEO_EXTENSIONS
+    extensions = {
+        "image": IMAGE_EXTENSIONS,
+        "video": VIDEO_EXTENSIONS,
+        "audio": AUDIO_EXTENSIONS,
+    }[asset.kind]
     if source.suffix.lower() not in extensions:
         raise RequestValidationError(f"{asset.kind} asset extension is unsupported")
 
 
-def _validate_workflow(workflow: dict, image: AssetSpec, video: AssetSpec) -> None:
+def _validate_dance_workflow(
+    workflow: dict, assets: tuple[AssetSpec, ...]
+) -> None:
+    image = next(asset for asset in assets if asset.kind == "image")
+    video = next(asset for asset in assets if asset.kind == "video")
     _require_workflow_node(workflow, "9", "LoadImage")
     _require_workflow_node(workflow, "43", "VHS_LoadVideo")
     _require_workflow_node(workflow, "42", "VHS_VideoCombine")
 
-    if workflow["9"]["inputs"].get("image") != image.comfy_name:
-        raise RequestValidationError("workflow node 9 filename does not match asset")
-    if workflow["43"]["inputs"].get("video") != video.comfy_name:
-        raise RequestValidationError("workflow node 43 filename does not match asset")
+    _validate_workflow_filename(workflow, "9", "image", image)
+    _validate_workflow_filename(workflow, "43", "video", video)
+
+
+def _validate_foodie_workflow(
+    workflow: dict, assets: tuple[AssetSpec, ...]
+) -> None:
+    kol = next(asset for asset in assets if asset.role == "kol")
+    storyboard = next(asset for asset in assets if asset.role == "storyboard")
+    voice = next(asset for asset in assets if asset.role == "voice")
+    _require_workflow_node(workflow, "9", "LoadImage")
+    _require_workflow_node(workflow, "48", "LoadImage")
+    _require_workflow_node(workflow, "50", "LoadAudio")
+    _require_workflow_node(workflow, "42", "VHS_VideoCombine")
+
+    _validate_workflow_filename(workflow, "9", "image", kol)
+    _validate_workflow_filename(workflow, "48", "image", storyboard)
+    _validate_workflow_filename(workflow, "50", "audio", voice)
+
+
+def _validate_workflow_filename(
+    workflow: dict, node_id: str, input_name: str, asset: AssetSpec
+) -> None:
+    if workflow[node_id]["inputs"].get(input_name) != asset.comfy_name:
+        raise RequestValidationError(
+            f"workflow node {node_id} filename does not match asset"
+        )
 
 
 def _require_workflow_node(workflow: dict, node_id: str, class_type: str) -> None:

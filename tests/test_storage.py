@@ -29,12 +29,51 @@ def make_request() -> JobRequest:
     )
 
 
+def make_foodie_request() -> JobRequest:
+    return JobRequest(
+        run_id=RUN_ID,
+        workflow={},
+        assets=(
+            AssetSpec(
+                "image",
+                f"jobs/{RUN_ID}/input/kol.png",
+                "kol.png",
+                "kol",
+            ),
+            AssetSpec(
+                "image",
+                f"jobs/{RUN_ID}/input/storyboard.png",
+                "storyboard.png",
+                "storyboard",
+            ),
+            AssetSpec(
+                "audio",
+                f"jobs/{RUN_ID}/input/voice.wav",
+                "voice.wav",
+                "voice",
+            ),
+        ),
+        output_node_id="42",
+        job_type="foodie",
+    )
+
+
 def make_volume(tmp_path: Path) -> Path:
     root = tmp_path / "volume"
     input_root = root / "jobs" / RUN_ID / "input"
     input_root.mkdir(parents=True)
     (input_root / "image.png").write_bytes(b"image bytes")
     (input_root / "source.mp4").write_bytes(b"video bytes")
+    return root
+
+
+def make_foodie_volume(tmp_path: Path) -> Path:
+    root = tmp_path / "volume"
+    input_root = root / "jobs" / RUN_ID / "input"
+    input_root.mkdir(parents=True)
+    (input_root / "kol.png").write_bytes(b"kol image bytes")
+    (input_root / "storyboard.png").write_bytes(b"storyboard image bytes")
+    (input_root / "voice.wav").write_bytes(b"voice audio bytes")
     return root
 
 
@@ -61,6 +100,19 @@ def test_stages_both_assets_and_removes_them_on_exit(tmp_path: Path) -> None:
 
     assert not (comfy_input / "image.png").exists()
     assert not (comfy_input / "source.mp4").exists()
+
+
+def test_stages_all_foodie_assets_and_removes_them_on_exit(tmp_path: Path) -> None:
+    volume = make_foodie_volume(tmp_path)
+    comfy_input = tmp_path / "comfy-input"
+    comfy_input.mkdir()
+
+    with staged_assets(make_foodie_request(), volume, comfy_input):
+        assert (comfy_input / "kol.png").read_bytes() == b"kol image bytes"
+        assert (comfy_input / "storyboard.png").read_bytes() == b"storyboard image bytes"
+        assert (comfy_input / "voice.wav").read_bytes() == b"voice audio bytes"
+
+    assert list(comfy_input.iterdir()) == []
 
 
 def test_staging_does_not_overwrite_an_existing_destination(tmp_path: Path) -> None:
