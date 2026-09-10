@@ -15,6 +15,7 @@ REQUIRED_NODE_CLASSES = frozenset(
         "KSamplerSelect",
         "LTXVConcatAVLatent",
         "LTXVSeparateAVLatent",
+        "LoadAudio",
         "LoadImage",
         "ManualSigmas",
         "MiniMaxH3ReferenceToVideo",

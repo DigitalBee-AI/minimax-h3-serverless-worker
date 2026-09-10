@@ -81,41 +81,48 @@ git commit -m "feat: accept role-aware Foodie worker jobs"
 ### Task 2: Verify Foodie staging through the shared handler
 
 **Files:**
+- Create: `.gitignore`
+- Modify: `docker/verify_nodes.py`
 - Modify: `tests/test_storage.py`
 - Modify: `tests/test_handler.py`
+- Modify: `tests/test_container_files.py`
 - Modify: `README.md`
 
 **Interfaces:**
 - Consumes: `JobRequest.assets: tuple[AssetSpec, ...]` from Task 1.
 - Produces: the unchanged success response containing `jobs/<run-id>/output/result.mp4`.
 
-- [ ] **Step 1: Write failing shared-lifecycle tests**
+- [x] **Step 1: Write failing shared-lifecycle tests**
 
 Add a storage request with three Foodie assets and assert all three files are present during `staged_assets` and absent after exit. Add a handler Foodie job and fake client that assert `kol.png`, `storyboard.png`, and `voice.wav` are staged while executing and that the standard MP4 response is returned.
 
-- [ ] **Step 2: Run focused lifecycle tests**
+- [x] **Step 2: Run focused lifecycle tests**
 
 Run: `python -m pytest tests/test_storage.py tests/test_handler.py -q`
 
 Expected: tests pass without handler changes because staging iterates over `request.assets`; any failure reveals an implementation mismatch to fix before proceeding.
 
-- [ ] **Step 3: Document both request contracts**
+- [x] **Step 3: Verify the Foodie audio node at container startup**
+
+Add `LoadAudio` to the exact required node-class set in `docker/verify_nodes.py` and its container-file test. Run the focused test red before changing the verifier and green afterward.
+
+- [x] **Step 4: Document both request contracts**
 
 Update `README.md` so operators can distinguish the backward-compatible Dance payload from the new `job_type: "foodie"` payload, including the three required roles and workflow node bindings.
 
-- [ ] **Step 4: Run the complete local suite**
+- [x] **Step 5: Run the complete local suite**
 
 Run: `python -m pytest -q`
 
 Expected: all tests pass with no network or RunPod calls.
 
-- [ ] **Step 5: Review the branch diff and commit**
+- [x] **Step 6: Review the branch diff and commit**
 
 Run: `git diff --check && git status --short --branch`
 
 Then commit:
 
 ```bash
-git add tests/test_storage.py tests/test_handler.py README.md
+git add .gitignore docker/verify_nodes.py tests/test_container_files.py tests/test_storage.py tests/test_handler.py README.md docs/superpowers/plans/2026-09-10-foodie-job-contract.md
 git commit -m "test: cover Foodie worker lifecycle"
 ```

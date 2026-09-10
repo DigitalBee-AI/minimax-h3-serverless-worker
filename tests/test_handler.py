@@ -14,6 +14,8 @@ from worker.storage import StorageError
 RUN_ID = "018f-example-id"
 IMAGE_NAME = "018f-example-id-kol.png"
 VIDEO_NAME = "018f-example-id-source.mp4"
+STORYBOARD_NAME = "storyboard.png"
+VOICE_NAME = "voice.wav"
 VIDEO_BYTES = b"real mp4 fixture"
 
 
@@ -44,6 +46,48 @@ def make_job() -> dict:
     }
 
 
+def make_foodie_job() -> dict:
+    return {
+        "input": {
+            "job_type": "foodie",
+            "run_id": RUN_ID,
+            "workflow": {
+                "9": {"class_type": "LoadImage", "inputs": {"image": IMAGE_NAME}},
+                "42": {"class_type": "VHS_VideoCombine", "inputs": {}},
+                "48": {
+                    "class_type": "LoadImage",
+                    "inputs": {"image": STORYBOARD_NAME},
+                },
+                "50": {
+                    "class_type": "LoadAudio",
+                    "inputs": {"audio": VOICE_NAME},
+                },
+            },
+            "assets": [
+                {
+                    "kind": "image",
+                    "role": "kol",
+                    "volume_path": f"jobs/{RUN_ID}/input/{IMAGE_NAME}",
+                    "comfy_name": IMAGE_NAME,
+                },
+                {
+                    "kind": "image",
+                    "role": "storyboard",
+                    "volume_path": f"jobs/{RUN_ID}/input/{STORYBOARD_NAME}",
+                    "comfy_name": STORYBOARD_NAME,
+                },
+                {
+                    "kind": "audio",
+                    "role": "voice",
+                    "volume_path": f"jobs/{RUN_ID}/input/{VOICE_NAME}",
+                    "comfy_name": VOICE_NAME,
+                },
+            ],
+            "output_node_id": "42",
+        }
+    }
+
+
 def make_volume(tmp_path: Path) -> Path:
     volume = tmp_path / "volume"
     input_root = volume / "jobs" / RUN_ID / "input"
@@ -54,8 +98,13 @@ def make_volume(tmp_path: Path) -> Path:
 
 
 class FakeClient:
-    def __init__(self, output_root: Path) -> None:
+    def __init__(
+        self,
+        output_root: Path,
+        staged_names: tuple[str, ...] = (IMAGE_NAME, VIDEO_NAME),
+    ) -> None:
         self.output_root = output_root
+        self.staged_names = staged_names
         self.workflow: dict | None = None
         self.client_id: str | None = None
         self.staged_inputs_present = False
@@ -65,7 +114,7 @@ class FakeClient:
         self.client_id = client_id
         self.staged_inputs_present = all(
             (self.output_root.parent / "comfy-input" / name).is_file()
-            for name in (IMAGE_NAME, VIDEO_NAME)
+            for name in self.staged_names
         )
         video = self.output_root / "minimaxh3_00001.mp4"
         video.write_bytes(VIDEO_BYTES)
@@ -130,6 +179,38 @@ def test_stages_assets_for_execution_and_removes_them_afterward(tmp_path: Path) 
 
     assert client.staged_inputs_present is True
     assert list(comfy_input.iterdir()) == []
+
+
+def test_foodie_job_stages_three_assets_and_returns_the_standard_video_contract(
+    tmp_path: Path,
+) -> None:
+    volume = make_volume(tmp_path)
+    input_root = volume / "jobs" / RUN_ID / "input"
+    (input_root / STORYBOARD_NAME).write_bytes(b"storyboard fixture")
+    (input_root / VOICE_NAME).write_bytes(b"voice fixture")
+    comfy_input = tmp_path / "comfy-input"
+    comfy_input.mkdir()
+    comfy_output = tmp_path / "comfy-output"
+    comfy_output.mkdir()
+    client = FakeClient(
+        comfy_output,
+        (IMAGE_NAME, STORYBOARD_NAME, VOICE_NAME),
+    )
+    handler = build_handler(client, volume, comfy_input, comfy_output)
+
+    result = handler(make_foodie_job())
+
+    assert client.staged_inputs_present is True
+    assert list(comfy_input.iterdir()) == []
+    assert result == {
+        "status": "success",
+        "run_id": RUN_ID,
+        "video": {
+            "volume_path": f"jobs/{RUN_ID}/output/result.mp4",
+            "filename": "result.mp4",
+            "size_bytes": len(VIDEO_BYTES),
+        },
+    }
 
 
 @pytest.mark.parametrize(

@@ -31,6 +31,7 @@ WORKFLOW_CLASSES = {
     "KSamplerSelect",
     "LTXVConcatAVLatent",
     "LTXVSeparateAVLatent",
+    "LoadAudio",
     "LoadImage",
     "ManualSigmas",
     "MiniMaxH3ReferenceToVideo",
@@ -371,7 +372,7 @@ def test_readme_documents_the_private_runpod_deployment_contract() -> None:
     assert "FlashBoot: enabled" in readme
     assert "Execution timeout: 3600 seconds" in readme
     assert "CUDA 13.0 or newer" in readme
-    assert "locust08/minimax-h3-serverless-worker" in readme
+    assert "DigitalBee-AI/minimax-h3-serverless-worker" in readme
     assert "POST /run" in readme
     assert "GET /status/{job-id}" in readme
     assert "Idle timeout: 5 seconds" in readme

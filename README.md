@@ -1,20 +1,22 @@
 # MiniMax H3 Serverless Worker
 
-This repository builds a RunPod **queue-based** Serverless worker for the KOL
-Dance MiniMax H3 ComfyUI workflow. It reads models and input assets from an
-attached private RunPod network volume, runs ComfyUI locally, and writes one
-private MP4 result back to that volume. It does not serve media publicly.
+This repository builds a RunPod **queue-based** Serverless worker for the DBee
+Dance and Foodie MiniMax H3 ComfyUI workflows. It reads models and input assets
+from an attached private RunPod network volume, runs ComfyUI locally, and writes
+one private MP4 result back to that volume. It does not serve media publicly.
 
 The approved [design](docs/superpowers/specs/2026-09-08-minimax-h3-serverless-worker-design.md)
 and [implementation plan](docs/superpowers/plans/2026-09-08-minimax-h3-serverless-worker.md)
 define the deployment and live-verification procedure.
+The [Foodie contract design](docs/superpowers/specs/2026-09-10-foodie-job-contract-design.md)
+defines the shared-worker extension.
 
 ## Setup and architecture
 
 The image starts ComfyUI on loopback, confirms the required node classes, and
-then starts the RunPod handler. The handler validates one image and one video,
-copies them from the private volume to ComfyUI's input directory, executes the
-workflow, and atomically publishes node 42's only MP4 output.
+then starts the RunPod handler. The handler validates either a Dance or Foodie
+request, copies its assets from the private volume to ComfyUI's input directory,
+executes the workflow, and atomically publishes node 42's only MP4 output.
 
 The mounted network volume is `j4ds1uajmj` in `US-KS-2`, at
 `/runpod-volume`. Populate this private layout before submitting a job:
@@ -28,8 +30,7 @@ The mounted network volume is `j4ds1uajmj` in `US-KS-2`, at
 │   ├── vae/minimax_h3_audio_vae_fp32.safetensors
 │   └── latent_upscale_models/minimax_h3_latent_upscaler_3d_bf16.safetensors
 └── jobs/<run-id>/
-    ├── input/<run-id>-kol.png
-    ├── input/<run-id>-source.mp4
+    ├── input/<Dance or Foodie assets>
     └── output/result.mp4
 ```
 
@@ -43,29 +44,71 @@ Comfyui_Minimax_h3_latent_Upscaler `d7c01b9011f2e8439493f6c02c29995a27df276f`.
 
 ## Private job contract
 
-`tests/fixtures/job-input.json` is **contract-validation-only** and is **not runnable**:
+`tests/fixtures/job-input.json` is a Dance **contract-validation-only** fixture and is **not runnable**:
 it contains only nodes 9, 42, and 43, without the complete generation graph.
 Copy it to `job-request.json` as a request template. Replace `input.workflow` with the
 full approved API-format workflow before `POST /run`, retaining the complete graph
 and setting nodes 9 and 43 to the uploaded assets' `comfy_name` values.
 
-Before calling RunPod, the website backend uploads both assets to the private
-volume paths in the prepared request. Submit the complete JSON envelope containing
-`input` as shown below. Each `volume_path` is relative to the mounted volume
-and must resolve beneath `jobs/<run-id>/input`; it is never an S3 URL or public
-URL. Node 9 is `LoadImage`, node 43 is `VHS_LoadVideo`, and node 42 is
-`VHS_VideoCombine`.
+Before calling RunPod, the website backend uploads every asset to the private
+volume paths in the prepared request. Each `volume_path` is relative to the
+mounted volume and must resolve beneath `jobs/<run-id>/input`; it is never an
+S3 URL or public URL.
 
-Use the approved endpoint `8vrjc9ecbvk8bl` only from server-side code. The
-submit route is `POST /run`; the status route is `GET /status/{job-id}`:
+Dance requests may omit `job_type` for backward compatibility or set it to
+`"dance"`. They require exactly one image and one video. Node 9 must be
+`LoadImage` and reference the image, node 43 must be `VHS_LoadVideo` and
+reference the video, and node 42 must be `VHS_VideoCombine`.
+
+Foodie requests set `job_type` to `"foodie"` and require exactly these assets:
+
+```json
+{
+  "input": {
+    "job_type": "foodie",
+    "run_id": "foodie_example-id",
+    "workflow": {},
+    "assets": [
+      {
+        "kind": "image",
+        "role": "kol",
+        "volume_path": "jobs/foodie_example-id/input/kol.png",
+        "comfy_name": "kol.png"
+      },
+      {
+        "kind": "image",
+        "role": "storyboard",
+        "volume_path": "jobs/foodie_example-id/input/storyboard.png",
+        "comfy_name": "storyboard.png"
+      },
+      {
+        "kind": "audio",
+        "role": "voice",
+        "volume_path": "jobs/foodie_example-id/input/voice.wav",
+        "comfy_name": "voice.wav"
+      }
+    ],
+    "output_node_id": "42"
+  }
+}
+```
+
+Replace the empty Foodie `workflow` with the complete API-format graph. Node 9
+must be `LoadImage` and reference the KOL image, node 48 must be `LoadImage` and
+reference the storyboard, node 50 must be `LoadAudio` and reference the voice
+WAV, and node 42 must be `VHS_VideoCombine`. Asset roles, kinds, and
+`comfy_name` values are validated before ComfyUI runs.
+
+Use the configured endpoint only from server-side code. The submit route is
+`POST /run`; the status route is `GET /status/{job-id}`:
 
 ```bash
-curl --request POST "https://api.runpod.ai/v2/8vrjc9ecbvk8bl/run" \
+curl --request POST "https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/run" \
   --header "Authorization: Bearer $RUNPOD_API_KEY" \
   --header "Content-Type: application/json" \
   --data @job-request.json
 
-curl "https://api.runpod.ai/v2/8vrjc9ecbvk8bl/status/{job-id}" \
+curl "https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/status/{job-id}" \
   --header "Authorization: Bearer $RUNPOD_API_KEY"
 ```
 
@@ -104,8 +147,8 @@ aws s3 cp \
 
 ## Endpoint deployment
 
-Configure endpoint `minimaxh3_beta4` from GitHub source
-`locust08/minimax-h3-serverless-worker`, branch `main`, context path `/`, and
+The current shared endpoint is built from GitHub source
+`DigitalBee-AI/minimax-h3-serverless-worker`, branch `main`, context path `/`, and
 Dockerfile path `Dockerfile`. Attach volume `j4ds1uajmj` and retain these exact
 settings:
 
