@@ -10,7 +10,12 @@ NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,191}$")
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm"}
 AUDIO_EXTENSIONS = {".wav"}
-SUPPORTED_JOB_TYPES = {"dance", "foodie"}
+SUPPORTED_JOB_TYPES = {
+    "dance",
+    "foodie",
+    "dbee-ai-ugc",
+    "dbee-product-showcase",
+}
 
 
 class RequestValidationError(ValueError):
@@ -59,10 +64,13 @@ def parse_job_input(value: object, volume_root: Path) -> JobRequest:
         raise RequestValidationError("assets are required")
 
     assets = tuple(_parse_asset(asset) for asset in raw_assets)
-    if job_type == "dance":
-        _validate_dance_assets(assets)
-    else:
-        _validate_foodie_assets(assets)
+    asset_validators = {
+        "dance": _validate_dance_assets,
+        "foodie": _validate_foodie_assets,
+        "dbee-ai-ugc": _validate_dbee_ai_ugc_assets,
+        "dbee-product-showcase": _validate_dbee_product_showcase_assets,
+    }
+    asset_validators[job_type](assets)
     if len({asset.comfy_name for asset in assets}) != len(assets):
         raise RequestValidationError("asset comfy_name values must be unique")
 
@@ -70,10 +78,13 @@ def parse_job_input(value: object, volume_root: Path) -> JobRequest:
     for asset in assets:
         _validate_asset_source(asset, input_root)
 
-    if job_type == "dance":
-        _validate_dance_workflow(workflow, assets)
-    else:
-        _validate_foodie_workflow(workflow, assets)
+    workflow_validators = {
+        "dance": _validate_dance_workflow,
+        "foodie": _validate_foodie_workflow,
+        "dbee-ai-ugc": _validate_dbee_ai_ugc_workflow,
+        "dbee-product-showcase": _validate_dbee_product_showcase_workflow,
+    }
+    workflow_validators[job_type](workflow, assets)
 
     return JobRequest(
         run_id=run_id,
@@ -133,6 +144,37 @@ def _validate_foodie_assets(assets: tuple[AssetSpec, ...]) -> None:
         )
 
 
+def _validate_dbee_ai_ugc_assets(assets: tuple[AssetSpec, ...]) -> None:
+    required = {
+        ("image", "character"),
+        ("image", "product"),
+        ("image", "environment"),
+        ("image", "storyboard"),
+        ("audio", "voice"),
+    }
+    if len(assets) != 5 or {(asset.kind, asset.role) for asset in assets} != required:
+        raise RequestValidationError(
+            "exactly five DBee AI UGC assets are required: character, product, "
+            "environment, storyboard, and voice"
+        )
+
+
+def _validate_dbee_product_showcase_assets(
+    assets: tuple[AssetSpec, ...]
+) -> None:
+    expected_roles = [f"picture-{index + 1}" for index in range(len(assets))]
+    if (
+        len(assets) < 1
+        or len(assets) > 9
+        or any(asset.kind != "image" for asset in assets)
+        or [asset.role for asset in assets] != expected_roles
+    ):
+        raise RequestValidationError(
+            "exactly 1-9 ordered DBee product images named picture-1 through "
+            "picture-9 are required"
+        )
+
+
 def _resolve_job_input_root(volume_root: Path, run_id: str) -> Path:
     lexical_components = (
         volume_root,
@@ -147,7 +189,7 @@ def _resolve_job_input_root(volume_root: Path, run_id: str) -> Path:
 
 def _validate_asset_source(asset: AssetSpec, input_root: Path) -> None:
     supplied_path = Path(asset.volume_path)
-    if supplied_path.is_absolute():
+    if supplied_path.is_absolute() or asset.volume_path.startswith(("/", "\\")):
         raise RequestValidationError("asset path must be relative")
     if ".." in supplied_path.parts:
         raise RequestValidationError("asset path escapes the job input directory")
@@ -211,6 +253,41 @@ def _validate_foodie_workflow(
     _validate_workflow_filename(workflow, "9", "image", kol)
     _validate_workflow_filename(workflow, "48", "image", storyboard)
     _validate_workflow_filename(workflow, "50", "audio", voice)
+
+
+def _validate_dbee_ai_ugc_workflow(
+    workflow: dict, assets: tuple[AssetSpec, ...]
+) -> None:
+    mapping = {
+        "character": ("9", "LoadImage", "image"),
+        "product": ("51", "LoadImage", "image"),
+        "environment": ("52", "LoadImage", "image"),
+        "storyboard": ("48", "LoadImage", "image"),
+        "voice": ("50", "LoadAudio", "audio"),
+    }
+    _require_workflow_node(workflow, "42", "VHS_VideoCombine")
+    for role, (node_id, class_type, input_name) in mapping.items():
+        asset = next(asset for asset in assets if asset.role == role)
+        _require_workflow_node(workflow, node_id, class_type)
+        _validate_workflow_filename(workflow, node_id, input_name, asset)
+
+
+def _validate_dbee_product_showcase_workflow(
+    workflow: dict, assets: tuple[AssetSpec, ...]
+) -> None:
+    _require_workflow_node(workflow, "11", "MiniMaxH3ReferenceToVideo")
+    _require_workflow_node(workflow, "42", "VHS_VideoCombine")
+    for index, asset in enumerate(assets):
+        node_id = str(100 + index)
+        _require_workflow_node(workflow, node_id, "LoadImage")
+        _validate_workflow_filename(workflow, node_id, "image", asset)
+        reference = workflow["11"]["inputs"].get(
+            f"ref_images.ref_image_{index}"
+        )
+        if reference != [node_id, 0]:
+            raise RequestValidationError(
+                f"workflow node 11 reference {index} does not match asset"
+            )
 
 
 def _validate_workflow_filename(

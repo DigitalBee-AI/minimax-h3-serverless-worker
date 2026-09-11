@@ -8,7 +8,7 @@ import pytest
 from handler import build_handler
 from worker.comfy import ComfyExecutionError
 from worker.contracts import RequestValidationError
-from worker.storage import StorageError
+from worker.storage import PublishedVideo, StorageError
 
 
 RUN_ID = "018f-example-id"
@@ -211,6 +211,110 @@ def test_foodie_job_stages_three_assets_and_returns_the_standard_video_contract(
             "size_bytes": len(VIDEO_BYTES),
         },
     }
+
+
+def test_dbee_ai_ugc_stages_five_assets_through_the_shared_handler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = make_foodie_job()
+    job["input"]["job_type"] = "dbee-ai-ugc"
+    job["input"]["assets"][0]["role"] = "character"
+    input_root_names = [IMAGE_NAME, STORYBOARD_NAME, VOICE_NAME]
+    for role, node_id in [("product", "51"), ("environment", "52")]:
+        filename = f"{role}.png"
+        input_root_names.append(filename)
+        job["input"]["assets"].append({
+            "kind": "image",
+            "role": role,
+            "volume_path": f"jobs/{RUN_ID}/input/{filename}",
+            "comfy_name": filename,
+        })
+        job["input"]["workflow"][node_id] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": filename},
+        }
+    # The contract is role-based; asset order does not alter the graph mapping.
+    job["input"]["assets"] = [
+        next(asset for asset in job["input"]["assets"] if asset["role"] == role)
+        for role in ["character", "product", "environment", "storyboard", "voice"]
+    ]
+    volume = make_volume(tmp_path)
+    input_root = volume / "jobs" / RUN_ID / "input"
+    for filename in [STORYBOARD_NAME, VOICE_NAME, "product.png", "environment.png"]:
+        (input_root / filename).write_bytes(b"fixture")
+    comfy_input = tmp_path / "comfy-input"
+    comfy_input.mkdir()
+    comfy_output = tmp_path / "comfy-output"
+    comfy_output.mkdir()
+    client = FakeClient(comfy_output, tuple(input_root_names))
+    monkeypatch.setattr(
+        "handler.publish_video",
+        lambda source, volume_root, run_id: PublishedVideo(
+            volume_path=f"jobs/{run_id}/output/result.mp4",
+            filename="result.mp4",
+            size_bytes=source.stat().st_size,
+        ),
+    )
+
+    result = build_handler(client, volume, comfy_input, comfy_output)(job)
+
+    assert client.staged_inputs_present is True
+    assert result["video"]["volume_path"] == f"jobs/{RUN_ID}/output/result.mp4"
+
+
+def test_dbee_product_showcase_stages_ordered_assets_through_the_shared_handler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    filenames = [f"picture-{index}.png" for index in range(1, 4)]
+    workflow = {
+        "11": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {}},
+        "42": {"class_type": "VHS_VideoCombine", "inputs": {}},
+    }
+    assets = []
+    volume = tmp_path / "volume"
+    input_root = volume / "jobs" / RUN_ID / "input"
+    input_root.mkdir(parents=True)
+    for index, filename in enumerate(filenames):
+        node_id = str(100 + index)
+        (input_root / filename).write_bytes(b"product image")
+        workflow[node_id] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": filename},
+        }
+        workflow["11"]["inputs"][f"ref_images.ref_image_{index}"] = [node_id, 0]
+        assets.append({
+            "kind": "image",
+            "role": f"picture-{index + 1}",
+            "volume_path": f"jobs/{RUN_ID}/input/{filename}",
+            "comfy_name": filename,
+        })
+    comfy_input = tmp_path / "comfy-input"
+    comfy_input.mkdir()
+    comfy_output = tmp_path / "comfy-output"
+    comfy_output.mkdir()
+    client = FakeClient(comfy_output, tuple(filenames))
+    monkeypatch.setattr(
+        "handler.publish_video",
+        lambda source, volume_root, run_id: PublishedVideo(
+            volume_path=f"jobs/{run_id}/output/result.mp4",
+            filename="result.mp4",
+            size_bytes=source.stat().st_size,
+        ),
+    )
+
+    result = build_handler(client, volume, comfy_input, comfy_output)({
+        "input": {
+            "job_type": "dbee-product-showcase",
+            "run_id": RUN_ID,
+            "workflow": workflow,
+            "assets": assets,
+            "output_node_id": "42",
+        }
+    })
+
+    assert client.staged_inputs_present is True
+    assert list(comfy_input.iterdir()) == []
+    assert result["video"]["filename"] == "result.mp4"
 
 
 @pytest.mark.parametrize(

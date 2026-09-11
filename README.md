@@ -1,7 +1,7 @@
 # MiniMax H3 Serverless Worker
 
 This repository builds a RunPod **queue-based** Serverless worker for the DBee
-Dance and Foodie MiniMax H3 ComfyUI workflows. It reads models and input assets
+Dance, Foodie, and DBee KOL Management MiniMax H3 ComfyUI workflows. It reads models and input assets
 from an attached private RunPod network volume, runs ComfyUI locally, and writes
 one private MP4 result back to that volume. It does not serve media publicly.
 
@@ -14,7 +14,7 @@ defines the shared-worker extension.
 ## Setup and architecture
 
 The image starts ComfyUI on loopback, confirms the required node classes, and
-then starts the RunPod handler. The handler validates either a Dance or Foodie
+then starts the RunPod handler. The handler validates a Dance, Foodie, DBee AI UGC, or DBee Product Showcase
 request, copies its assets from the private volume to ComfyUI's input directory,
 executes the workflow, and atomically publishes node 42's only MP4 output.
 
@@ -38,7 +38,7 @@ The direct runtime dependencies are `requests==2.32.5` and `runpod==1.8.1`.
 The container pins CUDA `13.0.2`, PyTorch `torch==2.10.0`,
 `torchvision==0.25.0`, and `torchaudio==2.10.0` from the CUDA 13.0 wheel index;
 ComfyUI `8a33128f2f8c5585c57486c07de481241e70a39c`; ComfyUI-KJNodes
-`c2a47f161bdcecc1e6baf3412f1d116febc26ce3`; ComfyUI-VideoHelperSuite
+`57105374f47d0fbb49c9c3926fb981702e0a4b5c`; ComfyUI-VideoHelperSuite
 `115de7a9d9e34410cffb9ecfd268e993b11a50fb`; and
 Comfyui_Minimax_h3_latent_Upscaler `d7c01b9011f2e8439493f6c02c29995a27df276f`.
 
@@ -98,6 +98,22 @@ must be `LoadImage` and reference the KOL image, node 48 must be `LoadImage` and
 reference the storyboard, node 50 must be `LoadAudio` and reference the voice
 WAV, and node 42 must be `VHS_VideoCombine`. Asset roles, kinds, and
 `comfy_name` values are validated before ComfyUI runs.
+
+DBee KOL Management uses two additional contracts while retaining the same
+private-volume and output rules:
+
+- `dbee-ai-ugc` requires exactly `character`, `product`, `environment`, and
+  `storyboard` images plus `voice` WAV audio. They must match workflow nodes 9,
+  51, 52, 48, and 50 respectively; node 42 remains the final MP4 output.
+- `dbee-product-showcase` requires 1–9 ordered images named `picture-1` through
+  `picture-9` with no gaps. LoadImage nodes 100–108 must match that order and
+  node 11 must reference each corresponding node through
+  `ref_images.ref_image_N`. Node 42 remains the final MP4 output.
+
+DBee uses deterministic run IDs in the form `dbee-<generation-id>` and uploads
+inputs below `jobs/<run-id>/input/`. The shared handler does not give any DBee
+request priority over Foodie or Dance; admission limits belong to each calling
+backend.
 
 Use the configured endpoint only from server-side code. The submit route is
 `POST /run`; the status route is `GET /status/{job-id}`:

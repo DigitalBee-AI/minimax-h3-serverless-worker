@@ -12,6 +12,8 @@ IMAGE_NAME = "018f-example-id-kol.png"
 VIDEO_NAME = "018f-example-id-source.mp4"
 STORYBOARD_NAME = "storyboard.png"
 VOICE_NAME = "voice.wav"
+PRODUCT_NAME = "product.png"
+ENVIRONMENT_NAME = "environment.png"
 
 
 def make_volume(tmp_path: Path) -> Path:
@@ -94,6 +96,90 @@ def make_foodie_payload() -> dict:
     }
 
 
+def make_dbee_ai_ugc_volume(tmp_path: Path) -> Path:
+    volume_root = make_foodie_volume(tmp_path)
+    input_root = volume_root / "jobs" / RUN_ID / "input"
+    (input_root / PRODUCT_NAME).write_bytes(b"product image")
+    (input_root / ENVIRONMENT_NAME).write_bytes(b"environment image")
+    return volume_root
+
+
+def make_dbee_ai_ugc_payload() -> dict:
+    role_files = {
+        "character": IMAGE_NAME,
+        "product": PRODUCT_NAME,
+        "environment": ENVIRONMENT_NAME,
+        "storyboard": STORYBOARD_NAME,
+        "voice": VOICE_NAME,
+    }
+    node_mapping = {
+        "character": ("9", "LoadImage", "image"),
+        "product": ("51", "LoadImage", "image"),
+        "environment": ("52", "LoadImage", "image"),
+        "storyboard": ("48", "LoadImage", "image"),
+        "voice": ("50", "LoadAudio", "audio"),
+    }
+    workflow = {
+        node_id: {
+            "class_type": class_type,
+            "inputs": {input_name: role_files[role]},
+        }
+        for role, (node_id, class_type, input_name) in node_mapping.items()
+    }
+    workflow["42"] = {"class_type": "VHS_VideoCombine", "inputs": {}}
+    return {
+        "job_type": "dbee-ai-ugc",
+        "run_id": RUN_ID,
+        "workflow": workflow,
+        "assets": [
+            {
+                "kind": "audio" if role == "voice" else "image",
+                "role": role,
+                "volume_path": f"jobs/{RUN_ID}/input/{filename}",
+                "comfy_name": filename,
+            }
+            for role, filename in role_files.items()
+        ],
+        "output_node_id": "42",
+    }
+
+
+def make_dbee_product_showcase(tmp_path: Path, count: int) -> tuple[dict, Path]:
+    volume_root = tmp_path / "volume"
+    input_root = volume_root / "jobs" / RUN_ID / "input"
+    input_root.mkdir(parents=True)
+    workflow = {
+        "11": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {}},
+        "42": {"class_type": "VHS_VideoCombine", "inputs": {}},
+    }
+    assets = []
+    for index in range(count):
+        role = f"picture-{index + 1}"
+        filename = f"{role}.png"
+        node_id = str(100 + index)
+        (input_root / filename).write_bytes(f"image {index + 1}".encode())
+        workflow[node_id] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": filename},
+        }
+        workflow["11"]["inputs"][f"ref_images.ref_image_{index}"] = [node_id, 0]
+        assets.append(
+            {
+                "kind": "image",
+                "role": role,
+                "volume_path": f"jobs/{RUN_ID}/input/{filename}",
+                "comfy_name": filename,
+            }
+        )
+    return {
+        "job_type": "dbee-product-showcase",
+        "run_id": RUN_ID,
+        "workflow": workflow,
+        "assets": assets,
+        "output_node_id": "42",
+    }, volume_root
+
+
 def parse(payload: dict, tmp_path: Path):
     return parse_job_input(payload, make_volume(tmp_path))
 
@@ -135,6 +221,74 @@ def test_accepts_the_complete_foodie_job_contract(tmp_path: Path) -> None:
     assert request.workflow["9"]["inputs"]["image"] == IMAGE_NAME
     assert request.workflow["48"]["inputs"]["image"] == STORYBOARD_NAME
     assert request.workflow["50"]["inputs"]["audio"] == VOICE_NAME
+
+
+def test_accepts_dbee_ai_ugc_with_exact_roles_and_node_mappings(tmp_path: Path) -> None:
+    request = parse_job_input(
+        make_dbee_ai_ugc_payload(), make_dbee_ai_ugc_volume(tmp_path)
+    )
+
+    assert request.job_type == "dbee-ai-ugc"
+    assert [(asset.kind, asset.role) for asset in request.assets] == [
+        ("image", "character"),
+        ("image", "product"),
+        ("image", "environment"),
+        ("image", "storyboard"),
+        ("audio", "voice"),
+    ]
+
+
+@pytest.mark.parametrize("count", [1, 9])
+def test_accepts_dbee_product_showcase_with_ordered_images(
+    count: int, tmp_path: Path
+) -> None:
+    payload, volume_root = make_dbee_product_showcase(tmp_path, count)
+
+    request = parse_job_input(payload, volume_root)
+
+    assert request.job_type == "dbee-product-showcase"
+    assert [asset.role for asset in request.assets] == [
+        f"picture-{index + 1}" for index in range(count)
+    ]
+
+
+@pytest.mark.parametrize("missing_role", ["character", "product", "environment", "storyboard", "voice"])
+def test_rejects_incomplete_dbee_ai_ugc_assets(
+    missing_role: str, tmp_path: Path
+) -> None:
+    payload = make_dbee_ai_ugc_payload()
+    payload["assets"] = [
+        asset for asset in payload["assets"] if asset["role"] != missing_role
+    ]
+
+    with pytest.raises(RequestValidationError, match="five DBee AI UGC assets"):
+        parse_job_input(payload, make_dbee_ai_ugc_volume(tmp_path))
+
+
+@pytest.mark.parametrize("count", [0, 10])
+def test_rejects_dbee_product_showcase_outside_image_limit(
+    count: int, tmp_path: Path
+) -> None:
+    payload, volume_root = make_dbee_product_showcase(tmp_path, count)
+
+    with pytest.raises(RequestValidationError, match="1-9 ordered DBee product images"):
+        parse_job_input(payload, volume_root)
+
+
+def test_rejects_dbee_product_showcase_numbering_gap(tmp_path: Path) -> None:
+    payload, volume_root = make_dbee_product_showcase(tmp_path, 3)
+    payload["assets"][1]["role"] = "picture-4"
+
+    with pytest.raises(RequestValidationError, match="1-9 ordered DBee product images"):
+        parse_job_input(payload, volume_root)
+
+
+def test_rejects_dbee_product_showcase_workflow_order_mismatch(tmp_path: Path) -> None:
+    payload, volume_root = make_dbee_product_showcase(tmp_path, 2)
+    payload["workflow"]["11"]["inputs"]["ref_images.ref_image_0"] = ["101", 0]
+
+    with pytest.raises(RequestValidationError, match="workflow node 11 reference 0"):
+        parse_job_input(payload, volume_root)
 
 
 @pytest.mark.parametrize("job_type", [None, "fashion", 42])

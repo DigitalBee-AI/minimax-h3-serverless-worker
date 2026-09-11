@@ -390,7 +390,7 @@ def test_readme_documents_the_private_runpod_deployment_contract() -> None:
     assert "torchvision==0.25.0" in readme
     assert "torchaudio==2.10.0" in readme
     assert "8a33128f2f8c5585c57486c07de481241e70a39c" in readme
-    assert "c2a47f161bdcecc1e6baf3412f1d116febc26ce3" in readme
+    assert "57105374f47d0fbb49c9c3926fb981702e0a4b5c" in readme
     assert "115de7a9d9e34410cffb9ecfd268e993b11a50fb" in readme
     assert "d7c01b9011f2e8439493f6c02c29995a27df276f" in readme
 
