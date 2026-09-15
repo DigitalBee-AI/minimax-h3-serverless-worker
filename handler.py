@@ -9,6 +9,7 @@ import runpod
 
 from worker.comfy import ComfyClient
 from worker.contracts import parse_job_input
+from worker.diagnostics import log_inputs
 from worker.storage import find_output_video, publish_video, staged_assets
 
 
@@ -34,8 +35,10 @@ def build_handler(
     def handle(job: dict) -> dict:
         request = parse_job_input(job["input"], volume_root)
         _log_lifecycle(request.run_id, "validated")
+        log_inputs(request, volume_root, staged=False)
 
         with staged_assets(request, volume_root, comfy_input_root):
+            log_inputs(request, comfy_input_root, staged=True)
             _log_lifecycle(request.run_id, "executing")
             history = client.execute(request.workflow, request.run_id)
             _log_lifecycle(request.run_id, "publishing")

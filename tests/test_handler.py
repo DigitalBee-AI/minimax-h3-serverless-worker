@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -372,3 +374,82 @@ class RaisingClient:
 
     def execute(self, workflow: dict, client_id: str) -> dict:
         raise self.error
+
+
+def test_dance_diagnostics_capture_copy_hashes_and_safe_links(tmp_path, caplog):
+    handler, client, _, _ = make_handler(tmp_path)
+    job = make_job()
+    job["input"]["workflow"]["11"] = {"inputs": {
+        "ref_images.ref_image_0": ["9", 0],
+        "ref_videos.ref_video_0": ["46", 0],
+        "prompt": "private prompt https://private.example/?token=secret",
+    }}
+    caplog.set_level(logging.INFO)
+    handler(job)
+    records = [json.loads(r.getMessage().split("diagnostics=", 1)[1])
+               for r in caplog.records if "diagnostics=" in r.getMessage()]
+    assert len(records) == 2
+    before, after = records
+    assert before["phase"] == "source"
+    assert after["phase"] == "staged"
+    assert before["assets"] == after["assets"] == [
+        {"index": 0, "sha256": hashlib.sha256(b"image fixture").hexdigest(), "bytes": 13},
+        {"index": 1, "sha256": hashlib.sha256(b"video fixture").hexdigest(), "bytes": 13},
+    ]
+    assert before["links"]["11.ref_images.ref_image_0"] == ["9", 0]
+    assert before["links"]["11.ref_videos.ref_video_0"] == ["46", 0]
+    expected = hashlib.sha256(json.dumps(job["input"]["workflow"], sort_keys=True,
+                                        separators=(",", ":")).encode()).hexdigest()
+    assert before["workflow_sha256"] == after["workflow_sha256"] == expected
+    assert client.workflow is job["input"]["workflow"]
+    for sensitive in ("private prompt", "private.example", "top-secret", IMAGE_NAME, "jobs/"):
+        assert sensitive not in caplog.text
+
+
+def test_diagnostics_never_log_arbitrary_connection_values(tmp_path, caplog):
+    handler, _, _, _ = make_handler(tmp_path)
+    job = make_job()
+    job["input"]["workflow"]["11"] = {"inputs": {
+        "ref_images.ref_image_0": ["https://private.example/secret", 0],
+    }}
+    caplog.set_level(logging.INFO)
+    handler(job)
+    assert "diagnostics=" in caplog.text
+    assert "private.example" not in caplog.text
+
+
+def test_diagnostic_failure_does_not_stop_render_or_leak_error(tmp_path, caplog, monkeypatch):
+    import worker.diagnostics as diagnostics
+
+    handler, _, _, _ = make_handler(tmp_path)
+
+    def unavailable_hash(*args, **kwargs):
+        raise OSError("private/path?token=secret")
+
+    monkeypatch.setattr(diagnostics.hashlib, "sha256", unavailable_hash)
+    caplog.set_level(logging.INFO)
+    assert handler(make_job())["status"] == "success"
+    assert "diagnostics_unavailable" in caplog.text
+    assert "private/path" not in caplog.text
+
+
+def test_diagnostics_reveal_changed_staged_bytes_without_changing_render(tmp_path, caplog, monkeypatch):
+    import shutil
+
+    handler, _, _, _ = make_handler(tmp_path)
+    original_copy = shutil.copy2
+
+    def changed_copy(source, destination):
+        result = original_copy(source, destination)
+        if destination.name == IMAGE_NAME:
+            destination.write_bytes(b"different image")
+        return result
+
+    monkeypatch.setattr(shutil, "copy2", changed_copy)
+    caplog.set_level(logging.INFO)
+    assert handler(make_job())["status"] == "success"
+    records = [json.loads(r.getMessage().split("diagnostics=", 1)[1])
+               for r in caplog.records if "diagnostics=" in r.getMessage()]
+    assert records[0]["assets"][0]["sha256"] == hashlib.sha256(b"image fixture").hexdigest()
+    assert records[1]["assets"][0]["sha256"] == hashlib.sha256(b"different image").hexdigest()
+    assert records[0]["assets"][1] == records[1]["assets"][1]
