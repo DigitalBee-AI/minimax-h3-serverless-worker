@@ -15,6 +15,8 @@ SUPPORTED_JOB_TYPES = {
     "foodie",
     "dbee-ai-ugc",
     "dbee-product-showcase",
+    "dbee-agent-text-to-video",
+    "dbee-agent-reference-to-video",
 }
 
 
@@ -69,6 +71,8 @@ def parse_job_input(value: object, volume_root: Path) -> JobRequest:
         "foodie": _validate_foodie_assets,
         "dbee-ai-ugc": _validate_dbee_ai_ugc_assets,
         "dbee-product-showcase": _validate_dbee_product_showcase_assets,
+        "dbee-agent-text-to-video": _validate_dbee_agent_text_assets,
+        "dbee-agent-reference-to-video": _validate_dbee_agent_reference_assets,
     }
     asset_validators[job_type](assets)
     if len({asset.comfy_name for asset in assets}) != len(assets):
@@ -83,6 +87,8 @@ def parse_job_input(value: object, volume_root: Path) -> JobRequest:
         "foodie": _validate_foodie_workflow,
         "dbee-ai-ugc": _validate_dbee_ai_ugc_workflow,
         "dbee-product-showcase": _validate_dbee_product_showcase_workflow,
+        "dbee-agent-text-to-video": _validate_dbee_agent_text_workflow,
+        "dbee-agent-reference-to-video": _validate_dbee_agent_reference_workflow,
     }
     workflow_validators[job_type](workflow, assets)
 
@@ -173,6 +179,21 @@ def _validate_dbee_product_showcase_assets(
             "exactly 1-9 ordered DBee product images named picture-1 through "
             "picture-9 are required"
         )
+
+
+def _validate_dbee_agent_text_assets(assets: tuple[AssetSpec, ...]) -> None:
+    if assets:
+        raise RequestValidationError("DBee Agent text-to-video requires no assets")
+
+
+def _validate_dbee_agent_reference_assets(assets: tuple[AssetSpec, ...]) -> None:
+    expected_roles = [f"picture-{index + 1}" for index in range(len(assets))]
+    if (
+        not 1 <= len(assets) <= 9
+        or any(asset.kind != "image" for asset in assets)
+        or [asset.role for asset in assets] != expected_roles
+    ):
+        raise RequestValidationError("DBee Agent reference-to-video requires 1-9 ordered images")
 
 
 def _resolve_job_input_root(volume_root: Path, run_id: str) -> Path:
@@ -288,6 +309,30 @@ def _validate_dbee_product_showcase_workflow(
             raise RequestValidationError(
                 f"workflow node 11 reference {index} does not match asset"
             )
+
+
+def _validate_dbee_agent_text_workflow(
+    workflow: dict, assets: tuple[AssetSpec, ...]
+) -> None:
+    _require_workflow_node(workflow, "11", "MiniMaxH3ImageToVideo")
+    _require_workflow_node(workflow, "42", "VHS_VideoCombine")
+    inputs = workflow["11"]["inputs"]
+    if any(key.startswith("ref_") or key in {"first_frame", "last_frame"} for key in inputs):
+        raise RequestValidationError("DBee Agent text-to-video must not contain image references")
+    if any(node.get("class_type") == "LoadImage" for node in workflow.values() if isinstance(node, dict)):
+        raise RequestValidationError("DBee Agent text-to-video must not load images")
+
+
+def _validate_dbee_agent_reference_workflow(
+    workflow: dict, assets: tuple[AssetSpec, ...]
+) -> None:
+    _validate_dbee_product_showcase_workflow(workflow, assets)
+    references = {
+        key for key in workflow["11"]["inputs"] if key.startswith("ref_images.ref_image_")
+    }
+    expected = {f"ref_images.ref_image_{index}" for index in range(len(assets))}
+    if references != expected:
+        raise RequestValidationError("DBee Agent reference count does not match assets")
 
 
 def _validate_workflow_filename(

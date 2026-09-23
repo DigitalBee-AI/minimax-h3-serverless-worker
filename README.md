@@ -109,6 +109,16 @@ private-volume and output rules:
   `picture-9` with no gaps. LoadImage nodes 100–108 must match that order and
   node 11 must reference each corresponding node through
   `ref_images.ref_image_N`. Node 42 remains the final MP4 output.
+- `dbee-agent-text-to-video` requires no assets. Node 11 must be
+  `MiniMaxH3ImageToVideo` with no image references, and node 42 must produce
+  the final MP4. The T2V graph requires the FL2VA diffusion model on the
+  attached volume; validate that model and graph on staging before enabling
+  Economy for members.
+- `dbee-agent-reference-to-video` requires 1–9 ordered images named
+  `picture-1` through `picture-9`. Node 11 must be
+  `MiniMaxH3ReferenceToVideo`, with LoadImage nodes 100–108 corresponding to
+  `ref_images.ref_image_N` in the supplied order. This is a separate job type
+  from Product Showcase and preserves its existing input contract.
 
 DBee uses deterministic run IDs in the form `dbee-<generation-id>` and uploads
 inputs below `jobs/<run-id>/input/`. The shared handler does not give any DBee

@@ -34,6 +34,7 @@ WORKFLOW_CLASSES = {
     "LoadAudio",
     "LoadImage",
     "ManualSigmas",
+    "MiniMaxH3ImageToVideo",
     "MiniMaxH3ReferenceToVideo",
     "MiniMaxH3SigmaShift",
     "MinimaxH3LatentUpscaler3D",

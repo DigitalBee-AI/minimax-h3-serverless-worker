@@ -19,6 +19,7 @@ REQUIRED_NODE_CLASSES = frozenset(
         "LoadImage",
         "ManualSigmas",
         "MiniMaxH3ReferenceToVideo",
+        "MiniMaxH3ImageToVideo",
         "MiniMaxH3SigmaShift",
         "MinimaxH3LatentUpscaler3D",
         "ModelAttentionBackend",
