@@ -144,6 +144,33 @@ def make_dbee_ai_ugc_payload() -> dict:
     }
 
 
+def make_dbee_ai_ugc_with_additional(tmp_path: Path, count: int) -> tuple[dict, Path]:
+    payload = make_dbee_ai_ugc_payload()
+    volume_root = make_dbee_ai_ugc_volume(tmp_path)
+    input_root = volume_root / "jobs" / RUN_ID / "input"
+    payload["workflow"]["11"] = {
+        "class_type": "MiniMaxH3ReferenceToVideo", "inputs": {}
+    }
+    for index in range(1, count + 1):
+        role = f"additional-{index}"
+        filename = f"{role}.png"
+        node_id = str(99 + index)
+        (input_root / filename).write_bytes(b"extra image")
+        payload["assets"].append({
+            "kind": "image",
+            "role": role,
+            "volume_path": f"jobs/{RUN_ID}/input/{filename}",
+            "comfy_name": filename,
+        })
+        payload["workflow"][node_id] = {
+            "class_type": "LoadImage", "inputs": {"image": filename}
+        }
+        payload["workflow"]["11"]["inputs"][f"ref_images.ref_image_{index + 3}"] = [
+            node_id, 0
+        ]
+    return payload, volume_root
+
+
 def make_dbee_product_showcase(tmp_path: Path, count: int) -> tuple[dict, Path]:
     volume_root = tmp_path / "volume"
     input_root = volume_root / "jobs" / RUN_ID / "input"
@@ -238,6 +265,35 @@ def test_accepts_dbee_ai_ugc_with_exact_roles_and_node_mappings(tmp_path: Path) 
     ]
 
 
+@pytest.mark.parametrize("count", [1, 5])
+def test_accepts_dbee_ai_ugc_additional_images(count: int, tmp_path: Path) -> None:
+    payload, volume_root = make_dbee_ai_ugc_with_additional(tmp_path, count)
+    request = parse_job_input(payload, volume_root)
+    assert [asset.role for asset in request.assets[-count:]] == [
+        f"additional-{index}" for index in range(1, count + 1)
+    ]
+
+
+def test_rejects_dbee_ai_ugc_extra_image_graph_mismatch(tmp_path: Path) -> None:
+    payload, volume_root = make_dbee_ai_ugc_with_additional(tmp_path, 1)
+    payload["workflow"]["11"]["inputs"]["ref_images.ref_image_4"] = ["48", 0]
+    with pytest.raises(RequestValidationError, match="additional reference"):
+        parse_job_input(payload, volume_root)
+
+
+def test_rejects_dbee_ai_ugc_additional_role_gap(tmp_path: Path) -> None:
+    payload, volume_root = make_dbee_ai_ugc_with_additional(tmp_path, 1)
+    payload["assets"][-1]["role"] = "additional-2"
+    with pytest.raises(RequestValidationError, match="contiguous additional"):
+        parse_job_input(payload, volume_root)
+
+
+def test_rejects_dbee_ai_ugc_sixth_extra_image(tmp_path: Path) -> None:
+    payload, volume_root = make_dbee_ai_ugc_with_additional(tmp_path, 6)
+    with pytest.raises(RequestValidationError, match="up to five"):
+        parse_job_input(payload, volume_root)
+
+
 @pytest.mark.parametrize("count", [1, 9])
 def test_accepts_dbee_product_showcase_with_ordered_images(
     count: int, tmp_path: Path
@@ -261,7 +317,7 @@ def test_rejects_incomplete_dbee_ai_ugc_assets(
         asset for asset in payload["assets"] if asset["role"] != missing_role
     ]
 
-    with pytest.raises(RequestValidationError, match="five DBee AI UGC assets"):
+    with pytest.raises(RequestValidationError, match="DBee AI UGC requires"):
         parse_job_input(payload, make_dbee_ai_ugc_volume(tmp_path))
 
 

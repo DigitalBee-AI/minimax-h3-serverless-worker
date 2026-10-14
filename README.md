@@ -102,9 +102,11 @@ WAV, and node 42 must be `VHS_VideoCombine`. Asset roles, kinds, and
 DBee KOL Management uses two additional contracts while retaining the same
 private-volume and output rules:
 
-- `dbee-ai-ugc` requires exactly `character`, `product`, `environment`, and
-  `storyboard` images plus `voice` WAV audio. They must match workflow nodes 9,
-  51, 52, 48, and 50 respectively; node 42 remains the final MP4 output.
+- `dbee-ai-ugc` requires `character`, `product`, `environment`, and
+  `storyboard` images plus `voice` WAV audio. It accepts up to five extra images
+  with contiguous roles `additional-1` through `additional-5`. The base assets
+  match workflow nodes 9, 51, 52, 48, and 50; extra images match LoadImage
+  nodes 100–104 and node 11 references 4–8. Node 42 remains the final MP4 output.
 - `dbee-product-showcase` requires 1–9 ordered images named `picture-1` through
   `picture-9` with no gaps. LoadImage nodes 100–108 must match that order and
   node 11 must reference each corresponding node through

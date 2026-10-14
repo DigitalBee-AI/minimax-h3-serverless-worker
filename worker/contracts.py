@@ -158,10 +158,21 @@ def _validate_dbee_ai_ugc_assets(assets: tuple[AssetSpec, ...]) -> None:
         ("image", "storyboard"),
         ("audio", "voice"),
     }
-    if len(assets) != 5 or {(asset.kind, asset.role) for asset in assets} != required:
+    additional_count = len(assets) - len(required)
+    roles = [(asset.kind, asset.role) for asset in assets]
+    expected = required | {
+        ("image", f"additional-{index}")
+        for index in range(1, additional_count + 1)
+    }
+    if (
+        additional_count < 0
+        or additional_count > 5
+        or len(set(roles)) != len(roles)
+        or set(roles) != expected
+    ):
         raise RequestValidationError(
-            "exactly five DBee AI UGC assets are required: character, product, "
-            "environment, storyboard, and voice"
+            "DBee AI UGC requires character, product, environment, storyboard, "
+            "voice, and up to five contiguous additional image roles"
         )
 
 
@@ -291,6 +302,19 @@ def _validate_dbee_ai_ugc_workflow(
         asset = next(asset for asset in assets if asset.role == role)
         _require_workflow_node(workflow, node_id, class_type)
         _validate_workflow_filename(workflow, node_id, input_name, asset)
+
+    additional_count = len(assets) - len(mapping)
+    if additional_count:
+        _require_workflow_node(workflow, "11", "MiniMaxH3ReferenceToVideo")
+    for index in range(1, additional_count + 1):
+        asset = next(asset for asset in assets if asset.role == f"additional-{index}")
+        node_id = str(99 + index)
+        _require_workflow_node(workflow, node_id, "LoadImage")
+        _validate_workflow_filename(workflow, node_id, "image", asset)
+        if workflow["11"]["inputs"].get(f"ref_images.ref_image_{index + 3}") != [node_id, 0]:
+            raise RequestValidationError(
+                f"workflow node 11 additional reference {index} does not match asset"
+            )
 
 
 def _validate_dbee_product_showcase_workflow(
