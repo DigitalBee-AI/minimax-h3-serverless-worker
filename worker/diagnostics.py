@@ -71,16 +71,18 @@ def log_hang_diagnostics(
     """Record what the GPU and ComfyUI were doing when a job hit its time limit.
 
     Never raises and never logs the workflow: only counts, GPU readings and the
-    tail of ComfyUI's own log, which RunPod already captures.
+    tail of ComfyUI's own log, which RunPod already captures. Each fact is its own
+    short line: RunPod's log pipeline blanked a single ~7 KB line in a live test.
     """
     try:
-        payload = {
-            "run_id": run_id,
-            "gpu": _gpu_state(),
-            "queue": _queue_state(get_json, prompt_id),
-            "comfy_log_tail": _log_tail(get_json),
-        }
-        logger.error("run_id=%s hang_diagnostics=%s", run_id, json.dumps(payload))
+        logger.error("run_id=%s hang_diagnostics gpu=%s", run_id, json.dumps(_gpu_state()))
+        logger.error(
+            "run_id=%s hang_diagnostics queue=%s",
+            run_id,
+            json.dumps(_queue_state(get_json, prompt_id)),
+        )
+        for line in _log_tail(get_json):
+            logger.error("run_id=%s hang_diagnostics log=%s", run_id, json.dumps(line))
     except Exception:
         logger.warning("run_id=%s hang_diagnostics_unavailable", run_id)
 
