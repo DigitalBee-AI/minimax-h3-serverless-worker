@@ -213,8 +213,10 @@ invalid value is ignored and the default applies.
 
 When the limit is reached the worker:
 
-1. logs one `hang_diagnostics=` line with the GPU readings from `nvidia-smi`, the
-   ComfyUI queue counts and the last 30 lines of ComfyUI's log (never the workflow);
+1. logs short `hang_diagnostics` lines (`gpu=`, `queue=` and up to 30 `log=` lines): the
+   GPU readings from `nvidia-smi`, the ComfyUI queue counts and the last lines of
+   ComfyUI's log, never the workflow. They are short on purpose, because RunPod
+   blanked one long line;
 2. asks ComfyUI to interrupt the job;
 3. fails the job with `ComfyUI job exceeded N seconds without completing` and sets
    `refresh_worker`, so RunPod replaces the worker instead of reusing a possibly

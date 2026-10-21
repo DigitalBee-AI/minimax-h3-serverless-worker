@@ -309,10 +309,25 @@ def fake_nvidia_smi(monkeypatch: pytest.MonkeyPatch, stdout: str | None) -> None
     monkeypatch.setattr(diagnostics.subprocess, "run", run)
 
 
+def hang_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if " hang_diagnostics " in r.getMessage()]
+
+
 def hang_payload(caplog: pytest.LogCaptureFixture) -> dict:
-    messages = [r.getMessage() for r in caplog.records if "hang_diagnostics=" in r.getMessage()]
-    assert len(messages) == 1
-    return json.loads(messages[0].split("hang_diagnostics=", 1)[1])
+    """Reassemble the short `run_id=... hang_diagnostics <section>=<json>` lines."""
+    payload: dict = {"run_id": None, "gpu": None, "queue": "missing", "comfy_log_tail": []}
+    messages = hang_messages(caplog)
+    assert messages, "no hang_diagnostics lines were logged"
+    for message in messages:
+        head, rest = message.split(" hang_diagnostics ", 1)
+        section, value = rest.split("=", 1)
+        payload["run_id"] = head.removeprefix("run_id=")
+        if section == "log":
+            payload["comfy_log_tail"].append(json.loads(value))
+        else:
+            payload[section] = json.loads(value)
+    assert payload["gpu"] is not None and payload["queue"] != "missing", "gpu and queue lines are always logged"
+    return payload
 
 
 def timing_out_client(base_url: str, limit: float = 0.05) -> ComfyClient:
@@ -406,6 +421,24 @@ def test_timeout_log_lines_are_truncated(
             timing_out_client(base_url).execute({}, "client-7")
 
     assert hang_payload(caplog)["comfy_log_tail"] == ["x" * 300]
+
+
+def test_every_hang_diagnostics_line_stays_short_for_runpod_logs(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # RunPod blanked a single ~7 KB log line; keep each line far below that.
+    fake_nvidia_smi(monkeypatch, "NVIDIA H100 NVL, 100, 90000, 95000, 61\n")
+    responses = stalled_responses()
+    responses.logs_response = {"entries": [{"t": "t", "m": "y" * 5000 + "\n"} for _ in range(40)]}
+    caplog.set_level(logging.INFO)
+
+    with comfy_server(responses) as base_url:
+        with pytest.raises(ComfyExecutionTimeout):
+            timing_out_client(base_url).execute({}, "client-7")
+
+    messages = hang_messages(caplog)
+    assert len(messages) == 2 + 30  # gpu, queue and the last 30 ComfyUI log lines
+    assert max(len(message) for message in messages) <= 500
 
 
 def test_timeout_is_still_reported_when_diagnostics_are_unavailable(
