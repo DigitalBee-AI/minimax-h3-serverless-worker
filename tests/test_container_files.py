@@ -179,6 +179,11 @@ case "$1" in
   /comfyui/main.py)
     printf '%s\\n' comfy-start >> "$EVENT_LOG"
     if [ "${COMFY_EXIT:-0}" = 1 ]; then exit 7; fi
+    if [ "${COMFY_CRASH_AFTER_HANDLER:-0}" = 1 ]; then
+      until grep -q '^handler-start$' "$EVENT_LOG"; do sleep 0.05; done
+      sleep 0.2
+      exit 9
+    fi
     trap 'printf "%s\\n" comfy-term >> "$EVENT_LOG"; exit 0' TERM INT
     while :; do sleep 1; done
     ;;
@@ -188,7 +193,7 @@ case "$1" in
   /app/handler.py)
     printf '%s\\n' handler-start >> "$EVENT_LOG"
     trap 'printf "%s\\n" handler-term >> "$EVENT_LOG"; exit 0' TERM INT
-    while :; do sleep 1; done
+    while [ ! -e "$EVENT_LOG.stop" ]; do sleep 1; done
     ;;
   *) exit 64 ;;
 esac
@@ -263,6 +268,39 @@ def test_start_script_stops_if_comfyui_exits_before_readiness(tmp_path: Path) ->
 
     assert result.returncode != 0
     assert event_log.read_text().splitlines() == ["comfy-start"]
+
+
+def test_start_script_stops_the_worker_if_comfyui_dies_while_serving(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_fake_commands(bin_dir)
+    event_log = tmp_path / "events"
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["EVENT_LOG"] = str(event_log)
+    env["COMFY_CRASH_AFTER_HANDLER"] = "1"
+    stderr_log = tmp_path / "stderr"
+
+    try:
+        with stderr_log.open("w") as stderr:
+            process = subprocess.Popen(
+                ["sh", START_SCRIPT], env=env, stdout=subprocess.DEVNULL, stderr=stderr
+            )
+            try:
+                returncode = process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                pytest.fail("start.sh kept running after ComfyUI died")
+    finally:
+        # Let any fake child that outlived a failing run finish on its own.
+        Path(f"{event_log}.stop").touch()
+
+    assert returncode != 0
+    assert "ComfyUI exited unexpectedly with status 9" in stderr_log.read_text()
+    events = event_log.read_text().splitlines()
+    assert events[:3] == ["comfy-start", "verify", "handler-start"]
+    assert "handler-term" in events
 
 
 def _load_verify_nodes():
@@ -394,6 +432,17 @@ def test_readme_documents_the_private_runpod_deployment_contract() -> None:
     assert "57105374f47d0fbb49c9c3926fb981702e0a4b5c" in readme
     assert "115de7a9d9e34410cffb9ecfd268e993b11a50fb" in readme
     assert "d7c01b9011f2e8439493f6c02c29995a27df276f" in readme
+
+
+def test_readme_documents_the_hang_guard() -> None:
+    readme = README.read_text()
+
+    assert "COMFY_MAX_EXECUTION_SECONDS" in readme
+    assert "1080" in readme
+    assert "3300" in readme
+    assert "hang_diagnostics" in readme
+    assert "refresh_worker" in readme
+    assert "ComfyUI exited unexpectedly" in readme
 
 
 def test_job_input_fixture_is_a_non_secret_handler_request() -> None:

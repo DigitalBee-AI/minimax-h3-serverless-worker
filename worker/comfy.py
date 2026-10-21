@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import math
 import os
 import re
 import time
@@ -8,9 +10,39 @@ from urllib.parse import quote
 
 import requests
 
+from worker.diagnostics import log_hang_diagnostics
+
+logger = logging.getLogger(__name__)
+
+# DBee submits its jobs with a 20 minute RunPod execution cap. Stop earlier so the
+# worker can log why it stalled; RunPod's own kill leaves no trace.
+DBEE_EXECUTION_LIMIT_SECONDS = 1080.0
+# Other job types run under the endpoint's own 3600 second cap.
+DEFAULT_EXECUTION_LIMIT_SECONDS = 3300.0
+
 
 class ComfyExecutionError(RuntimeError):
     """Raised when ComfyUI cannot execute a submitted workflow."""
+
+
+class ComfyExecutionTimeout(ComfyExecutionError):
+    """Raised when ComfyUI does not finish a workflow within its time limit."""
+
+
+def execution_limit_seconds(job_type: str) -> float:
+    """Seconds a job may run: COMFY_MAX_EXECUTION_SECONDS, else the job type default."""
+    configured = os.environ.get("COMFY_MAX_EXECUTION_SECONDS")
+    if configured is not None:
+        try:
+            value = float(configured)
+        except ValueError:
+            value = math.nan
+        if math.isfinite(value) and value > 0:
+            return value
+        logger.warning("COMFY_MAX_EXECUTION_SECONDS is invalid; using the job type default")
+    if job_type.startswith("dbee-"):
+        return DBEE_EXECUTION_LIMIT_SECONDS
+    return DEFAULT_EXECUTION_LIMIT_SECONDS
 
 
 class ComfyClient:
@@ -21,6 +53,7 @@ class ComfyClient:
         base_url: Optional[str] = None,
         poll_interval: Optional[float] = None,
         request_timeout: Optional[float] = None,
+        max_execution_seconds: Optional[float] = None,
     ) -> None:
         self._base_url = (
             base_url or os.environ.get("COMFY_BASE_URL", "http://127.0.0.1:8188")
@@ -35,10 +68,23 @@ class ComfyClient:
             if request_timeout is None
             else request_timeout
         )
+        self._max_execution_seconds = (
+            execution_limit_seconds("")
+            if max_execution_seconds is None
+            else max_execution_seconds
+        )
         self._session = requests.Session()
 
-    def execute(self, workflow: dict, client_id: str) -> dict:
-        """Submit a workflow and return its completed ComfyUI history entry."""
+    def execute(
+        self, workflow: dict, client_id: str, max_seconds: Optional[float] = None
+    ) -> dict:
+        """Submit a workflow and return its completed ComfyUI history entry.
+
+        Raises ComfyExecutionTimeout if it has not completed within max_seconds
+        (default: the client's limit), after logging diagnostics and interrupting it.
+        """
+        limit = self._max_execution_seconds if max_seconds is None else max_seconds
+        deadline = time.monotonic() + limit
         prompt_response = self._request(
             "post", "/prompt", json={"prompt": workflow, "client_id": client_id}
         )
@@ -71,7 +117,21 @@ class ComfyClient:
                     raise ComfyExecutionError(execution_message)
                 if status.get("completed") is True:
                     return history
+            if time.monotonic() >= deadline:
+                self._abandon(client_id, prompt_id, limit)
             time.sleep(self._poll_interval)
+
+    def _abandon(self, run_id: str, prompt_id: str, limit: float) -> None:
+        # Capture the stalled state first: interrupting changes what ComfyUI reports.
+        log_hang_diagnostics(run_id, prompt_id, self._get_json)
+        try:
+            self._request("post", "/interrupt")
+        except ComfyExecutionError:
+            pass  # Best effort; the handler asks RunPod to replace this worker next.
+        raise ComfyExecutionTimeout(f"ComfyUI job exceeded {limit:g} seconds without completing")
+
+    def _get_json(self, path: str) -> object:
+        return self._json(self._request("get", path))
 
     def _request(self, method: str, path: str, **kwargs: object) -> requests.Response:
         try:
