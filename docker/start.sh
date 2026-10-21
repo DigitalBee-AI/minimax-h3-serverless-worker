@@ -62,4 +62,16 @@ python /app/verify_nodes.py http://127.0.0.1:8188/object_info
 
 python /app/handler.py &
 HANDLER_PID=$!
+
+# A worker whose ComfyUI has died still accepts jobs and fails each one. Exit instead
+# so RunPod replaces it, and record how ComfyUI ended (137 = killed, 139 = segfault).
+while kill -0 "$HANDLER_PID" 2>/dev/null; do
+    if ! kill -0 "$COMFY_PID" 2>/dev/null; then
+        comfy_status=0
+        wait "$COMFY_PID" 2>/dev/null || comfy_status=$?
+        echo "ComfyUI exited unexpectedly with status $comfy_status" >&2
+        exit 70
+    fi
+    sleep 1
+done
 wait "$HANDLER_PID"

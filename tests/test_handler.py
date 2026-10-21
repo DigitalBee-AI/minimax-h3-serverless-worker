@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from handler import build_handler
-from worker.comfy import ComfyExecutionError
+from worker.comfy import ComfyExecutionError, ComfyExecutionTimeout
 from worker.contracts import RequestValidationError
 from worker.storage import PublishedVideo, StorageError
 
@@ -109,11 +109,15 @@ class FakeClient:
         self.staged_names = staged_names
         self.workflow: dict | None = None
         self.client_id: str | None = None
+        self.max_seconds: float | None = None
         self.staged_inputs_present = False
 
-    def execute(self, workflow: dict, client_id: str) -> dict:
+    def execute(
+        self, workflow: dict, client_id: str, max_seconds: float | None = None
+    ) -> dict:
         self.workflow = workflow
         self.client_id = client_id
+        self.max_seconds = max_seconds
         self.staged_inputs_present = all(
             (self.output_root.parent / "comfy-input" / name).is_file()
             for name in self.staged_names
@@ -372,8 +376,87 @@ class RaisingClient:
     def __init__(self, error: Exception) -> None:
         self.error = error
 
-    def execute(self, workflow: dict, client_id: str) -> dict:
+    def execute(
+        self, workflow: dict, client_id: str, max_seconds: float | None = None
+    ) -> dict:
         raise self.error
+
+
+def make_failing_handler(tmp_path: Path, error: Exception) -> tuple[object, Path]:
+    volume = make_volume(tmp_path)
+    comfy_input = tmp_path / "comfy-input"
+    comfy_input.mkdir()
+    comfy_output = tmp_path / "comfy-output"
+    comfy_output.mkdir()
+    return build_handler(RaisingClient(error), volume, comfy_input, comfy_output), comfy_input
+
+
+class LimitRecordingClient:
+    def __init__(self) -> None:
+        self.max_seconds: float | None = None
+
+    def execute(
+        self, workflow: dict, client_id: str, max_seconds: float | None = None
+    ) -> dict:
+        self.max_seconds = max_seconds
+        raise ComfyExecutionTimeout("stop after recording the limit")
+
+
+def test_handler_gives_comfyui_the_default_limit_for_the_job_type(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("COMFY_MAX_EXECUTION_SECONDS", raising=False)
+    volume = make_volume(tmp_path)
+    comfy_input = tmp_path / "comfy-input"
+    comfy_input.mkdir()
+    comfy_output = tmp_path / "comfy-output"
+    comfy_output.mkdir()
+    client = LimitRecordingClient()
+
+    build_handler(client, volume, comfy_input, comfy_output)(make_job())
+
+    assert client.max_seconds == 3300.0
+
+
+def test_handler_gives_comfyui_the_environment_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COMFY_MAX_EXECUTION_SECONDS", "600")
+    volume = make_volume(tmp_path)
+    comfy_input = tmp_path / "comfy-input"
+    comfy_input.mkdir()
+    comfy_output = tmp_path / "comfy-output"
+    comfy_output.mkdir()
+    client = LimitRecordingClient()
+
+    build_handler(client, volume, comfy_input, comfy_output)(make_job())
+
+    assert client.max_seconds == 600.0
+
+
+def test_comfy_timeout_fails_the_job_and_asks_runpod_to_replace_the_worker(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    error = ComfyExecutionTimeout("ComfyUI job exceeded 1080 seconds without completing")
+    handler, comfy_input = make_failing_handler(tmp_path, error)
+    caplog.set_level(logging.INFO)
+
+    result = handler(make_job())
+
+    assert result == {
+        "error": "ComfyUI job exceeded 1080 seconds without completing",
+        "refresh_worker": True,
+    }
+    assert list(comfy_input.iterdir()) == []
+    assert f"run_id={RUN_ID} state=timed_out" in caplog.text
+    assert "top-secret" not in caplog.text
+
+
+def test_other_comfy_errors_still_escape_without_recycling_the_worker(tmp_path: Path) -> None:
+    handler, _ = make_failing_handler(tmp_path, ComfyExecutionError("sampler failed"))
+
+    with pytest.raises(ComfyExecutionError, match="sampler failed"):
+        handler(make_job())
 
 
 def test_dance_diagnostics_capture_copy_hashes_and_safe_links(tmp_path, caplog):

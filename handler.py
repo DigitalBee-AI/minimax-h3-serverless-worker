@@ -7,7 +7,7 @@ from typing import Callable, Protocol
 
 import runpod
 
-from worker.comfy import ComfyClient
+from worker.comfy import ComfyClient, ComfyExecutionTimeout, execution_limit_seconds
 from worker.contracts import parse_job_input
 from worker.diagnostics import log_inputs
 from worker.storage import find_output_video, publish_video, staged_assets
@@ -21,7 +21,9 @@ logger = logging.getLogger(__name__)
 
 
 class WorkflowClient(Protocol):
-    def execute(self, workflow: dict, client_id: str) -> dict: ...
+    def execute(
+        self, workflow: dict, client_id: str, max_seconds: float | None = None
+    ) -> dict: ...
 
 
 def build_handler(
@@ -37,15 +39,24 @@ def build_handler(
         _log_lifecycle(request.run_id, "validated")
         log_inputs(request, volume_root, staged=False)
 
-        with staged_assets(request, volume_root, comfy_input_root):
-            log_inputs(request, comfy_input_root, staged=True)
-            _log_lifecycle(request.run_id, "executing")
-            history = client.execute(request.workflow, request.run_id)
-            _log_lifecycle(request.run_id, "publishing")
-            source = find_output_video(
-                history, request.output_node_id, comfy_output_root
-            )
-            published = publish_video(source, volume_root, request.run_id)
+        try:
+            with staged_assets(request, volume_root, comfy_input_root):
+                log_inputs(request, comfy_input_root, staged=True)
+                _log_lifecycle(request.run_id, "executing")
+                history = client.execute(
+                    request.workflow,
+                    request.run_id,
+                    max_seconds=execution_limit_seconds(request.job_type),
+                )
+                _log_lifecycle(request.run_id, "publishing")
+                source = find_output_video(
+                    history, request.output_node_id, comfy_output_root
+                )
+                published = publish_video(source, volume_root, request.run_id)
+        except ComfyExecutionTimeout as error:
+            _log_lifecycle(request.run_id, "timed_out")
+            # ComfyUI may be wedged; have RunPod replace this worker instead of reusing it.
+            return {"error": str(error), "refresh_worker": True}
 
         _log_lifecycle(request.run_id, "completed")
         return {

@@ -202,6 +202,29 @@ python3.12 -m venv .venv
 docker build --platform linux/amd64 -t minimax-h3-serverless-worker:test .
 ```
 
+## Hung jobs and ComfyUI exits
+
+RunPod bills every second until its execution timeout, so a stalled job is
+stopped by the worker first. The handler gives each job a limit set by
+`COMFY_MAX_EXECUTION_SECONDS`. When that variable is unset the limit is 1080
+seconds for `dbee-*` jobs (DBee submits them with a 20 minute RunPod cap) and 3300
+seconds for `dance` and `foodie`, both below the endpoint's 3600 second cap. An
+invalid value is ignored and the default applies.
+
+When the limit is reached the worker:
+
+1. logs one `hang_diagnostics=` line with the GPU readings from `nvidia-smi`, the
+   ComfyUI queue counts and the last 30 lines of ComfyUI's log (never the workflow);
+2. asks ComfyUI to interrupt the job;
+3. fails the job with `ComfyUI job exceeded N seconds without completing` and sets
+   `refresh_worker`, so RunPod replaces the worker instead of reusing a possibly
+   wedged ComfyUI.
+
+`docker/start.sh` also watches ComfyUI. If ComfyUI exits while the handler is
+running, the container logs `ComfyUI exited unexpectedly with status N` (137 means
+it was killed, 139 a segmentation fault) and exits, so RunPod does not keep a worker
+that can only fail jobs.
+
 ## Logs and troubleshooting
 
 Worker logs contain lifecycle states only. They must not contain full prompts,
