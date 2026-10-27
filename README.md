@@ -208,7 +208,8 @@ RunPod bills every second until its execution timeout, so a stalled job is
 stopped by the worker first. The handler gives each job a limit set by
 `COMFY_MAX_EXECUTION_SECONDS`. When that variable is unset the limit is 1080
 seconds for `dbee-*` jobs (DBee submits them with a 20 minute RunPod cap) and 3300
-seconds for `dance` and `foodie`, both below the endpoint's 3600 second cap. An
+seconds for `dbee-product-showcase`, `dance` and `foodie` (DBee submits showcases
+with a 60 minute cap), both below the endpoint's 3600 second cap. An
 invalid value is ignored and the default applies.
 
 When the limit is reached the worker:

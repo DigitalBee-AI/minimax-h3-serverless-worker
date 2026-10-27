@@ -17,8 +17,10 @@ logger = logging.getLogger(__name__)
 # DBee submits its jobs with a 20 minute RunPod execution cap. Stop earlier so the
 # worker can log why it stalled; RunPod's own kill leaves no trace.
 DBEE_EXECUTION_LIMIT_SECONDS = 1080.0
-# Other job types run under the endpoint's own 3600 second cap.
+# Other job types, and DBee product showcases (a cold worker can spend most of 20
+# minutes loading weights), run under the endpoint's own 3600 second cap.
 DEFAULT_EXECUTION_LIMIT_SECONDS = 3300.0
+DBEE_FULL_CAP_JOB_TYPES = frozenset({"dbee-product-showcase"})
 
 
 class ComfyExecutionError(RuntimeError):
@@ -40,7 +42,7 @@ def execution_limit_seconds(job_type: str) -> float:
         if math.isfinite(value) and value > 0:
             return value
         logger.warning("COMFY_MAX_EXECUTION_SECONDS is invalid; using the job type default")
-    if job_type.startswith("dbee-"):
+    if job_type.startswith("dbee-") and job_type not in DBEE_FULL_CAP_JOB_TYPES:
         return DBEE_EXECUTION_LIMIT_SECONDS
     return DEFAULT_EXECUTION_LIMIT_SECONDS
 
