@@ -487,7 +487,7 @@ def test_timeout_is_reported_when_comfyui_cannot_be_reached_after_the_limit(
     ("job_type", "expected"),
     [
         ("dbee-ai-ugc", 1080.0),
-        ("dbee-product-showcase", 1080.0),
+        ("dbee-product-showcase", 3300.0),
         ("dbee-agent-text-to-video", 1080.0),
         ("dbee-agent-reference-to-video", 1080.0),
         ("dance", 3300.0),
